@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>IPTV Explorer Desktop</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">IE</span><div><strong>IPTV Explorer</strong><small>Desktop · 0.2.0-dev</small></div></div>
+      <nav aria-label="Navigation principale">
+        <button class="nav active" data-page="home"><span>⌂</span>Accueil</button>
+        <button class="nav" data-page="live"><span>◉</span>Live</button>
+        <button class="nav" data-page="vod"><span>▶</span>Films</button>
+        <button class="nav" data-page="series"><span>▤</span>Séries</button>
+        <button class="nav" data-page="search"><span>⌕</span>Recherche</button>
+      </nav>
+      <button class="nav settings" data-page="settings"><span>⚙</span>Paramètres</button>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">BIBLIOTHÈQUE LOCALE</p><h1 id="page-title">Accueil</h1></div>
+        <div class="top-actions"><label class="provider-picker"><span>Fournisseur</span><select id="provider-select" aria-label="Fournisseur actif"><option value="">Aucun fournisseur actif</option></select></label><span class="privacy">Local et privé</span></div>
+      </header>
+      <div id="toast" role="status" aria-live="polite"></div>
+
+      <section id="home" class="page active">
+        <div id="zero-state" class="welcome"><div class="welcome-copy"><span class="pill">PREMIER DÉMARRAGE</span><h2>Bienvenue dans IPTV Explorer</h2><p>Aucun fournisseur IPTV configuré. Ajoutez votre premier fournisseur Xtream ou Stalker/MAG pour commencer.</p><button class="primary open-onboarding">＋ Ajouter un fournisseur</button></div><div class="orb" aria-hidden="true"><span>IE</span></div></div>
+        <div id="dashboard" class="hidden"><div class="dashboard-hero"><div><p class="eyebrow">FOURNISSEUR ACTIF</p><h2 id="dashboard-name">—</h2><p id="dashboard-meta" class="muted">—</p></div><span id="dashboard-status" class="status neutral">Vérification…</span></div><div id="dashboard-stats" class="stats"></div><div class="panel"><div class="panel-head"><div><p class="eyebrow">INDEX LOCAL</p><h3>Recherche Films & Séries</h3></div><button class="secondary" id="home-index">Construire l’index</button></div><div id="home-index-status" class="index-progress">Pas construit</div></div></div>
+      </section>
+
+      <section id="live" class="page catalog-page" data-catalog="live"><aside class="category-rail"><input class="category-filter" type="search" placeholder="Filtrer les catégories"><div class="category-list"></div></aside><div class="catalog-content"><div class="loading-state hidden">Chargement…</div><div class="catalog-grid live-grid"></div><div class="empty-catalog">Sélectionnez une catégorie Live.</div></div></section>
+      <section id="vod" class="page catalog-page" data-catalog="vod"><aside class="category-rail"><input class="category-filter" type="search" placeholder="Filtrer les catégories"><div class="category-list"></div></aside><div class="catalog-content"><div class="loading-state hidden">Chargement…</div><div class="catalog-grid"></div><div class="empty-catalog">Sélectionnez une catégorie Films.</div><div class="pager hidden"><button class="secondary previous-page">Précédent</button><span class="page-info"></span><button class="secondary next-page">Suivant</button></div></div></section>
+      <section id="series" class="page catalog-page" data-catalog="series"><aside class="category-rail"><input class="category-filter" type="search" placeholder="Filtrer les catégories"><div class="category-list"></div></aside><div class="catalog-content"><div class="loading-state hidden">Chargement…</div><div class="catalog-grid"></div><div class="empty-catalog">Sélectionnez une catégorie Séries.</div><div class="pager hidden"><button class="secondary previous-page">Précédent</button><span class="page-info"></span><button class="secondary next-page">Suivant</button></div></div></section>
+
+      <section id="search" class="page"><div class="search-hero"><div><p class="eyebrow">INDEX DU FOURNISSEUR ACTIF</p><h2>Recherche globale</h2></div><form id="search-form"><input id="global-search" type="search" minlength="3" placeholder="Titre de film ou série…"><button class="primary">Rechercher</button></form></div><div id="search-message" class="muted">Saisissez au moins trois caractères.</div><div id="search-results"></div></section>
+
+      <section id="settings" class="page">
+        <div class="settings-tabs"><button class="active" data-settings="providers">Fournisseurs</button><button data-settings="categories">Catégories</button><button data-settings="index">Index</button><button data-settings="preferences">Préférences</button></div>
+        <div id="settings-providers" class="settings-pane active"><div class="panel-head"><div><p class="eyebrow">CONFIGURATION LOCALE</p><h2>Fournisseurs</h2></div><button class="primary open-onboarding">＋ Ajouter</button></div><div id="settings-provider-list" class="provider-list"></div><div id="diagnostic-panel" class="panel hidden"></div></div>
+        <div id="settings-categories" class="settings-pane"><div class="panel-head"><div><p class="eyebrow">SÉLECTION</p><h2>Catégories</h2></div><button class="secondary" id="sync-categories">Actualiser les catégories</button></div><div class="catalog-tabs"><button class="active" data-policy-catalog="live">Live</button><button data-policy-catalog="vod">Films</button><button data-policy-catalog="series">Séries</button></div><div class="category-tools"><input id="policy-filter" type="search" placeholder="Rechercher une catégorie"><button class="secondary" id="policy-all">Tous</button><button class="secondary" id="policy-none">Aucun</button><span id="policy-count"></span></div><div id="policy-list" class="policy-list"></div><button class="primary" id="save-policy">Enregistrer la sélection</button></div>
+        <div id="settings-index" class="settings-pane"><div class="panel"><div class="panel-head"><div><p class="eyebrow">RECHERCHE LOCALE</p><h2>Index Films & Séries</h2></div><button class="primary" id="build-index">Construire / recommencer</button></div><div id="index-status" class="index-progress">Pas construit</div></div></div>
+        <div id="settings-preferences" class="settings-pane"><form id="preferences-form" class="preferences-form"><h2>Interface et lecteur</h2><label>Langue de l’interface<select name="interfaceLanguage"><option value="auto">Auto (système)</option><option value="fr">Français</option><option value="en">English</option></select></label><label>Thème<select name="theme"><option value="system">Système</option><option value="dark">Sombre</option><option value="light">Clair</option></select></label><label>Langue audio préférée<input name="audioLanguage" placeholder="Auto"></label><label>Langue audio secondaire<input name="secondaryAudioLanguage" placeholder="Auto"></label><label>Langue des sous-titres<input name="subtitleLanguage" placeholder="Auto"></label><label class="toggle"><input name="automaticForcedSubtitles" type="checkbox"><span>Sous-titres forcés automatiques</span></label><button class="primary">Enregistrer</button></form></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="onboarding-dialog" class="modal wide-modal"><form id="onboarding-form" method="dialog"><div class="dialog-head"><div><p class="eyebrow">ASSISTANT FOURNISSEUR</p><h2>Ajouter un fournisseur</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fermer">×</button></div><div class="steps"><span class="current">1</span><i></i><span>2</span><i></i><span>3</span><i></i><span>4</span><i></i><span>5</span></div>
+    <div class="wizard-step active" data-step="1"><div class="form-grid"><label>Nom du fournisseur<input name="name" maxlength="80" required placeholder="Mon fournisseur"></label><label>Type<select name="providerType"><option value="auto">Détection automatique</option><option value="xtream">Xtream</option><option value="stalker">Stalker / MAG</option></select></label><label class="full">URL du serveur<input name="serverUrl" type="url" required placeholder="https://example.invalid"></label></div><p class="hint">Seuls les protocoles et chemins standards connus sont testés. Aucun scan réseau.</p></div>
+    <div class="wizard-step" data-step="2"><div id="xtream-fields" class="form-grid"><label>Username<input name="username" autocomplete="off"></label><label>Password<input name="password" type="password" autocomplete="new-password"></label></div><div id="stalker-fields"><label>MAC<input name="macAddress" autocomplete="off" placeholder="00:00:00:00:00:00"></label></div><p class="hint">Les secrets transitent une seule fois vers C#, ne sont placés dans aucun stockage Web et ne seront jamais renvoyés après sauvegarde.</p></div>
+    <div class="wizard-step" data-step="3"><div class="test-box"><div class="radar">✓</div><h3>Tester avant de sauvegarder</h3><p>Le test vérifie l’authentification puis charge uniquement les catégories.</p><button type="button" class="primary" id="test-provider">Tester la connexion</button><div id="onboarding-diagnostic"></div></div></div>
+    <div class="wizard-step" data-step="4"><div class="catalog-tabs onboarding-tabs"><button type="button" class="active" data-onboarding-catalog="live">Live</button><button type="button" data-onboarding-catalog="vod">Films</button><button type="button" data-onboarding-catalog="series">Séries</button></div><div class="category-tools"><input id="onboarding-filter" type="search" placeholder="Rechercher"><button type="button" class="secondary" id="onboarding-all">Tous</button><button type="button" class="secondary" id="onboarding-none">Aucun</button><span id="onboarding-count"></span></div><div id="onboarding-categories" class="policy-list"></div></div>
+    <div class="wizard-step" data-step="5"><div class="review"><div class="radar">✓</div><h3>Configuration prête</h3><p id="onboarding-summary"></p><label class="toggle confirm-enable"><input name="enableProvider" type="checkbox"><span>Activer ce fournisseur après sauvegarde</span></label><p class="hint">Un fournisseur non activé reste disponible dans Paramètres → Fournisseurs.</p></div></div>
+    <div id="onboarding-error" class="form-error" role="alert"></div><footer><button type="button" class="secondary" id="wizard-previous" disabled>Retour</button><button type="button" class="primary" id="wizard-next">Continuer</button><button type="submit" class="primary hidden" id="save-provider">Enregistrer</button></footer></form></dialog>
+
+  <dialog id="detail-dialog" class="modal detail-modal"><div class="dialog-head"><h2 id="detail-title">Détails</h2><button type="button" class="icon-button close-dialog" aria-label="Fermer">×</button></div><div id="detail-content"></div></dialog>
+  <dialog id="player-dialog" class="modal player-modal"><div class="dialog-head"><div><p class="eyebrow">LECTEUR DESKTOP</p><h2 id="player-title">Lecture</h2></div><button type="button" class="icon-button close-dialog" aria-label="Fermer">×</button></div><div class="player-placeholder"><span>▶</span><h3>Lecteur natif en préparation</h3><p>La référence média a été résolue exclusivement dans le processus C#. libmpv sera intégré en Phase 3.</p></div></dialog>
+  <dialog id="edit-dialog" class="modal"><form id="edit-form" method="dialog"><div class="dialog-head"><h2>Modifier le fournisseur</h2><button type="button" class="icon-button close-dialog" aria-label="Fermer">×</button></div><input type="hidden" name="providerKey"><label>Nom<input name="name" required maxlength="80"></label><label>URL<input name="serverUrl" type="url" required></label><div id="edit-xtream"><label>Username<input name="username" placeholder="Laisser vide pour conserver"></label><label>Nouveau mot de passe<input name="password" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label></div><div id="edit-stalker"><label>Nouvelle MAC<input name="macAddress" placeholder="Laisser vide pour conserver"></label></div><p class="hint">Le secret existant n’est jamais affiché. La nouvelle configuration sera testée avant remplacement.</p><div id="edit-error" class="form-error"></div><footer><button class="primary">Tester et enregistrer</button></footer></form></dialog>
+  <script src="app.js"></script>
+</body>
+</html>

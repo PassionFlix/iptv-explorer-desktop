@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\IPTVExplorer.Core\IPTVExplorer.Core.csproj" />
+  </ItemGroup>
+</Project>

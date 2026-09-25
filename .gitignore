@@ -1,0 +1,66 @@
+# .NET build and test outputs
+**/bin/
+**/obj/
+TestResults/
+artifacts/
+publish/
+**/publish/
+out/
+dist/
+*.nupkg
+*.snupkg
+
+# Visual Studio and local IDE state
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IPTV Explorer runtime data
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+cache/
+**/cache/
+indexes/
+**/indexes/
+logs/
+**/logs/
+secrets/
+**/secrets/
+credentials/
+**/credentials/
+user-data/
+**/user-data/
+
+# Credentials and private keys
+.env
+.env.*
+*.secret
+*.secrets
+*.credentials
+credentials.json
+secrets.json
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Temporary and generated desktop files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+.DS_Store
+Thumbs.db
