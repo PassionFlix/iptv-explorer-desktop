@@ -114,8 +114,9 @@ public sealed class ProviderFixtureTests
         Assert.False(provider.Enabled);
         Assert.Equal(500, (await database.Repository.ListCategoriesAsync(provider.Key, CatalogType.Live)).Count);
         Assert.Single(await database.Repository.ListCategoriesAsync(provider.Key, CatalogType.Vod), category => category.Selected);
-        var printable = Encoding.UTF8.GetString(await File.ReadAllBytesAsync(database.Paths.Database));
-        Assert.DoesNotContain("password-demo", printable, StringComparison.Ordinal);
+        var storage = await database.ReadRawSqliteStorageAsync();
+        Assert.NotEmpty(storage);
+        foreach (var printable in storage) Assert.DoesNotContain("password-demo", printable, StringComparison.Ordinal);
     }
 
     private sealed class StaticJsonHandler(string json) : HttpMessageHandler

@@ -28,9 +28,12 @@ public sealed class FreshInstallTests
         var store = new InMemorySecretStore();
         var reference = await store.PutAsync(new("user-demo", "password-demo", "00:00:00:00:00:00"));
         await database.AddProviderAsync(secretReference: reference);
-        var bytes = await File.ReadAllBytesAsync(database.Paths.Database);
-        var printable = System.Text.Encoding.UTF8.GetString(bytes);
-        Assert.DoesNotContain("password-demo", printable, StringComparison.Ordinal);
-        Assert.DoesNotContain("00:00:00:00:00:00", printable, StringComparison.Ordinal);
+        var storage = await database.ReadRawSqliteStorageAsync();
+        Assert.NotEmpty(storage);
+        foreach (var printable in storage)
+        {
+            Assert.DoesNotContain("password-demo", printable, StringComparison.Ordinal);
+            Assert.DoesNotContain("00:00:00:00:00:00", printable, StringComparison.Ordinal);
+        }
     }
 }

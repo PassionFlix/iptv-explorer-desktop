@@ -26,9 +26,29 @@ internal sealed class TestDatabase : IAsyncDisposable
         var provider = new ProviderRecord("fixture-provider", type, "Fixture Provider", new Uri("https://example.invalid"), secretReference, Enabled: false);
         await Repository.AddAsync(provider); return provider;
     }
+
+    public async Task<IReadOnlyList<string>> ReadRawSqliteStorageAsync()
+    {
+        // Disposed pooled connections can retain the SQLite file handle on Windows.
+        // Clear only this test database pool before inspecting its raw persisted bytes.
+        using (var poolKey = Connections.Create())
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(poolKey);
+        }
+
+        var storage = new List<string>();
+        foreach (var path in new[] { Paths.Database, Paths.Database + "-wal", Paths.Database + "-shm", Paths.Database + "-journal" })
+        {
+            if (!File.Exists(path)) continue;
+            storage.Add(System.Text.Encoding.UTF8.GetString(await File.ReadAllBytesAsync(path)));
+        }
+        return storage;
+    }
+
     public ValueTask DisposeAsync()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        using var poolKey = Connections.Create();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearPool(poolKey);
         if (Directory.Exists(Root)) Directory.Delete(Root, true);
         return ValueTask.CompletedTask;
     }
