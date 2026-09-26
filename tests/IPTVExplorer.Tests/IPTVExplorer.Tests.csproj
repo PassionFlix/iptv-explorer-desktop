@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\IPTVExplorer.Core\IPTVExplorer.Core.csproj" />
     <ProjectReference Include="..\..\src\IPTVExplorer.Infrastructure\IPTVExplorer.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\IPTVExplorer.Player\IPTVExplorer.Player.csproj" />
     <ProjectReference Include="..\..\src\IPTVExplorer.Providers\IPTVExplorer.Providers.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

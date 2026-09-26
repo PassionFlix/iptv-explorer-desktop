@@ -37,7 +37,8 @@ public partial class App : Application
             builder.Services.AddSingleton<IProviderClientFactory, ProviderClientFactory>();
             builder.Services.AddSingleton<ProviderOnboardingService>();
             builder.Services.AddSingleton<ProviderManagementService>();
-            builder.Services.AddSingleton<IPlayerService, PlayerNotInstalledService>();
+            builder.Services.AddSingleton<IPlayerService, LibMpvPlayerService>();
+            builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();
             builder.Services.AddSingleton<BridgeRouter>();
             builder.Services.AddHostedService<IndexRebuildWorker>();

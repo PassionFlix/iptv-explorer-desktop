@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
+using IPTVExplorer.Player;
 using IPTVExplorer.Providers;
 using Microsoft.Extensions.Logging;
 

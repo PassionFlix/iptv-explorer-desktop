@@ -178,7 +178,6 @@
     parent.append(section);
   }
   async function openPlayer(reference, title) {
-    $('#player-title').textContent = title; $('#player-dialog').showModal();
     try { await rpc('player.open', reference, 'player'); }
     catch (error) { if (!isAbort(error)) toast(error.message, true); }
   }
