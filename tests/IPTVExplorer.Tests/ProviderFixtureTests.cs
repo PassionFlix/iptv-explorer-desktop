@@ -97,17 +97,21 @@ public sealed class ProviderFixtureTests
     }
 
     [Fact]
-    public async Task StalkerVodDifferentIdsReturnDifferentDetails()
+    public async Task StalkerVodLoadedPageReturnsDifferentDetailsWhenMovieIdIsIgnored()
     {
-        using var http = new HttpClient(new StalkerRegressionHandler());
+        var handler = new StalkerRegressionHandler();
+        using var http = new HttpClient(handler);
         var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+        var page = await client.GetVodPageAsync("20", 1);
 
         var filmA = await client.GetVodDetailsAsync("101");
         var filmB = await client.GetVodDetailsAsync("202");
 
+        Assert.Equal(["101", "202"], page.Items.Select(item => item.Id));
         Assert.Equal(("Film A", "poster-a", "Plot A"), (filmA.Title, filmA.Poster, filmA.Plot));
         Assert.Equal(("Film B", "poster-b", "Plot B"), (filmB.Title, filmB.Poster, filmB.Plot));
         Assert.NotEqual(filmA.Id, filmB.Id);
+        Assert.Equal(0, handler.VodDetailRequests);
     }
 
     [Fact]
@@ -115,8 +119,7 @@ public sealed class ProviderFixtureTests
     {
         using var http = new HttpClient(new StalkerRegressionHandler());
         var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
-        _ = await client.GetVodDetailsAsync("101");
-        _ = await client.GetVodDetailsAsync("202");
+        _ = await client.GetVodPageAsync("20", 1);
 
         var filmA = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Vod, "101"));
         var filmB = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Vod, "202"));
@@ -127,14 +130,16 @@ public sealed class ProviderFixtureTests
     }
 
     [Fact]
-    public async Task StalkerVodMissingIdDoesNotReturnFirstItem()
+    public async Task StalkerVodUncachedIdRejectsIgnoredMovieIdResponse()
     {
-        using var http = new HttpClient(new StalkerRegressionHandler());
+        var handler = new StalkerRegressionHandler();
+        using var http = new HttpClient(handler);
         var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
 
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => client.GetVodDetailsAsync("missing"));
 
         Assert.Equal("Contenu introuvable.", exception.Message);
+        Assert.Equal(1, handler.VodDetailRequests);
     }
 
     [Fact]
@@ -501,6 +506,7 @@ public sealed class ProviderFixtureTests
     {
         public int AllChannelsRequests { get; private set; }
         public bool GenreParameterWasSent { get; private set; }
+        public int VodDetailRequests { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -525,8 +531,9 @@ public sealed class ProviderFixtureTests
                 var requested = Parameter(request.RequestUri, "movie_id");
                 var filmA = "{\"id\":\"101\",\"name\":\"Film A\",\"screenshot_uri\":\"poster-a\",\"description\":\"Plot A\",\"cmd\":\"ffmpeg http://internal.invalid/film-a\"}";
                 var filmB = "{\"movie_id\":\"202\",\"name\":\"Film B\",\"screenshot_uri\":\"poster-b\",\"description\":\"Plot B\",\"cmd\":\"ffmpeg http://internal.invalid/film-b\"}";
-                var data = requested == "101" ? $"{filmB},{filmA}" : $"{filmA},{filmB}";
-                return Task.FromResult(Json($"{{\"js\":{{\"data\":[{data}],\"total_items\":2,\"max_page_items\":14,\"cur_page\":1}}}}"));
+                if (requested is null) return Task.FromResult(Json($"{{\"js\":{{\"data\":[{filmA},{filmB}],\"total_items\":2,\"max_page_items\":14,\"cur_page\":1}}}}"));
+                VodDetailRequests++;
+                return Task.FromResult(Json("{\"js\":{\"data\":[{\"id\":\"999\",\"name\":\"Wrong Film\",\"screenshot_uri\":\"wrong-poster\",\"description\":\"Wrong plot\"}],\"total_items\":1,\"max_page_items\":14,\"cur_page\":1}}"));
             }
             if (action == "create_link")
             {

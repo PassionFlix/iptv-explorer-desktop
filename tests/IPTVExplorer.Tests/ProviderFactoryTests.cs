@@ -25,7 +25,7 @@ public sealed class ProviderFactoryTests
     }
 
     [Fact]
-    public async Task ProviderFactoryReusesStalkerSessionAndCatalogCachePerConfiguration()
+    public async Task ProviderFactoryReusesStalkerClientForConfigurationLifetime()
     {
         var secrets = new InMemorySecretStore();
         var reference = await secrets.PutAsync(new(MacAddress: "00:00:00:00:00:00"));

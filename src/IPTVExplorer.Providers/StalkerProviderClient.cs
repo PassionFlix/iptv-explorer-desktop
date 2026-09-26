@@ -10,6 +10,7 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     private readonly SemaphoreSlim _handshake = new(1, 1);
     private readonly SemaphoreSlim _liveCatalogLock = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(CatalogType Catalog, string Id), string> _commands = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, VodDetails> _vodDetails = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _categoryStructures = new(StringComparer.Ordinal);
     private IReadOnlyList<LiveChannel>? _liveChannels;
     private DateTimeOffset _liveChannelsExpiresAt;
@@ -76,11 +77,15 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 
     public async Task<VodDetails> GetVodDetailsAsync(string id, CancellationToken cancellationToken = default)
     {
+        if (_vodDetails.TryGetValue(id, out var cached)) return cached;
+
         using var document = await PortalAsync("vod", "get_ordered_list", [("movie_id", id), ("p", "1")], cancellationToken);
         var item = FindMediaRecord(document.RootElement, CatalogType.Vod, id);
         if (item.ValueKind == JsonValueKind.Undefined) throw ContentNotFound();
         CacheCommand(item, CatalogType.Vod, id);
-        return new VodDetails(id, item.Text("name", "title") ?? "Untitled", item.Text("screenshot_uri", "cover", "logo"), item.Text("description", "plot"), item.Text("year"), item.Text("genres_str", "genre"), item.Text("director"), item.Text("actors", "cast"), item.Text("time", "duration"), ParseRating(item.Text("rating", "kinopoisk_rating")), item.Text("container_extension"));
+        var details = NormalizeVodDetails(item, id);
+        _vodDetails[id] = details;
+        return details;
     }
 
     public async Task<SeriesDetails> GetSeriesDetailsAsync(string id, CancellationToken cancellationToken = default)
@@ -182,6 +187,7 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
             var item = JsonSupport.Item(raw, catalog);
             if (item.Id.Length == 0) continue;
             CacheCommand(raw, catalog, item.Id);
+            if (catalog == CatalogType.Vod) _vodDetails[item.Id] = NormalizeVodDetails(raw, item.Id);
             result.Add(item);
         }
         return result;
@@ -199,16 +205,29 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     {
         foreach (var item in ReadRawItems(root))
         {
-            var candidate = catalog switch
+            var fields = catalog switch
             {
-                CatalogType.Vod => item.Text("id", "movie_id", "stream_id"),
-                CatalogType.Series => item.Text("id", "movie_id", "series_id"),
-                _ => item.Text("id", "stream_id")
+                CatalogType.Vod => new[] { "id", "movie_id", "stream_id" },
+                CatalogType.Series => new[] { "id", "movie_id", "series_id" },
+                _ => new[] { "id", "stream_id" }
             };
-            if (string.Equals(candidate, id, StringComparison.Ordinal)) return item;
+            if (fields.Any(field => string.Equals(item.Text(field), id, StringComparison.Ordinal))) return item;
         }
         return default;
     }
+
+    private static VodDetails NormalizeVodDetails(JsonElement item, string id) => new(
+        id,
+        item.Text("name", "title") ?? "Untitled",
+        item.Text("screenshot_uri", "cover", "logo"),
+        item.Text("description", "plot"),
+        item.Text("year"),
+        item.Text("genres_str", "genre"),
+        item.Text("director"),
+        item.Text("actors", "cast"),
+        item.Text("time", "duration"),
+        ParseRating(item.Text("rating")),
+        item.Text("container_extension"));
 
     private IReadOnlyList<SeasonDetails> MapSeriesSeasons(IReadOnlyList<JsonElement> records)
     {
