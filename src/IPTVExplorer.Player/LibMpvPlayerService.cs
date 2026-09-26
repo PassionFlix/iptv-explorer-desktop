@@ -44,7 +44,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
 
             var (api, handle) = RequiredEngine();
             var headers = FormatHeaders(media.Headers);
-            if (api.SetOptionString(handle, "http-header-fields", headers) < 0)
+            if (api.SetPropertyString(handle, "file-local-options/http-header-fields", headers) < 0)
                 throw new InvalidOperationException("Impossible de configurer les en-têtes HTTP du lecteur.");
             if (api.Command(handle, "loadfile", media.Uri.AbsoluteUri, "replace") < 0)
                 throw new InvalidOperationException("Impossible de charger le média dans libmpv.");
@@ -81,7 +81,6 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     public void Stop()
     {
         Execute((api, handle) => api.Command(handle, "stop"));
-        Execute((api, handle) => api.SetOptionString(handle, "http-header-fields", string.Empty));
         RaiseState(PlayerState.Stopped);
     }
 
@@ -146,14 +145,14 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             RequiredSuccess(api.SetOptionString(handle, "terminal", "no"));
             RequiredSuccess(api.SetOptionString(handle, "input-default-bindings", "no"));
             RequiredSuccess(api.SetOptionString(handle, "input-cursor", "no"));
-            RequiredSuccess(api.SetOptionString(handle, "wid", renderHostHandle.ToInt64().ToString(CultureInfo.InvariantCulture)));
+            var windowId = unchecked((uint)renderHostHandle.ToInt64());
+            RequiredSuccess(api.SetOptionString(handle, "wid", windowId.ToString(CultureInfo.InvariantCulture)));
             RequiredSuccess(api.Initialize(handle));
             RequiredSuccess(api.ObserveProperty(handle, 1, "pause", MpvFormat.Flag));
             RequiredSuccess(api.ObserveProperty(handle, 2, "idle-active", MpvFormat.Flag));
-            RequiredSuccess(api.ObserveProperty(handle, 3, "core-idle", MpvFormat.Flag));
-            RequiredSuccess(api.ObserveProperty(handle, 4, "time-pos", MpvFormat.Double));
-            RequiredSuccess(api.ObserveProperty(handle, 5, "duration", MpvFormat.Double));
-            RequiredSuccess(api.ObserveProperty(handle, 6, "track-list", MpvFormat.Node));
+            RequiredSuccess(api.ObserveProperty(handle, 3, "time-pos", MpvFormat.Double));
+            RequiredSuccess(api.ObserveProperty(handle, 4, "duration", MpvFormat.Double));
+            RequiredSuccess(api.ObserveProperty(handle, 5, "track-list", MpvFormat.Node));
         }
         catch
         {
@@ -194,6 +193,8 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
                         RaiseState(PlayerState.Playing);
                         break;
                     case MpvEventKind.EndFile:
+                        RaiseState(PlayerState.Stopped);
+                        break;
                     case MpvEventKind.Shutdown:
                         RaiseState(PlayerState.Stopped);
                         return;
@@ -217,7 +218,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             case "pause" when value is bool paused:
                 RaiseState(paused ? PlayerState.Paused : PlayerState.Playing);
                 break;
-            case "idle-active" or "core-idle" when value is true:
+            case "idle-active" when value is true:
                 RaiseState(PlayerState.Idle);
                 break;
             case "time-pos":

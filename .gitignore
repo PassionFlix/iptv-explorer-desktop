@@ -64,3 +64,10 @@ secrets.json
 *.appxbundle
 .DS_Store
 Thumbs.db
+
+# Local libmpv runtime (keep native/mpv/README.txt tracked)
+src/IPTVExplorer.Desktop/native/mpv/*.dll
+src/IPTVExplorer.Desktop/native/mpv/*.exe
+src/IPTVExplorer.Desktop/native/mpv/*.pdb
+src/IPTVExplorer.Desktop/native/mpv/*.zip
+src/IPTVExplorer.Desktop/native/mpv/*.7z

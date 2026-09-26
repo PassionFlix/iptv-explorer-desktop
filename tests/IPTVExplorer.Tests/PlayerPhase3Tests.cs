@@ -50,11 +50,73 @@ public sealed class PlayerPhase3Tests
     public void LibMpvPathIsPinnedBelowApplicationBaseDirectory()
     {
         var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "iptv-player-root", Guid.NewGuid().ToString("N")));
-        var locator = new LibMpvLibraryLocator(root);
+        try
+        {
+            var locator = new LibMpvLibraryLocator(root);
+            Assert.Equal(Path.Combine(root, "native", "mpv", "libmpv-2.dll"), locator.LibraryPath);
+            Assert.Equal(Path.Combine(root, "native", "mpv", "libmpv-2.dll"), locator.PrimaryLibraryPath);
+            Assert.Equal(Path.Combine(root, "native", "mpv", "mpv-2.dll"), locator.FallbackLibraryPath);
+            Assert.True(Path.IsPathFullyQualified(locator.LibraryPath));
+            Assert.StartsWith(root + Path.DirectorySeparatorChar, locator.LibraryPath, StringComparison.Ordinal);
 
-        Assert.Equal(Path.Combine(root, "native", "mpv", "mpv-2.dll"), locator.LibraryPath);
-        Assert.True(Path.IsPathFullyQualified(locator.LibraryPath));
-        Assert.StartsWith(root + Path.DirectorySeparatorChar, locator.LibraryPath, StringComparison.Ordinal);
+            Directory.CreateDirectory(Path.GetDirectoryName(locator.FallbackLibraryPath)!);
+            File.WriteAllText(locator.FallbackLibraryPath, "test placeholder");
+            Assert.Equal(locator.FallbackLibraryPath, new LibMpvLibraryLocator(root).LibraryPath);
+
+            File.WriteAllText(locator.PrimaryLibraryPath, "test placeholder");
+            Assert.Equal(locator.PrimaryLibraryPath, new LibMpvLibraryLocator(root).LibraryPath);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task EndFileKeepsEventLoopAliveForSecondMediaOnSameWindow()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+        var firstPlaying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondPlaying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var playingCount = 0;
+        player.StateChanged += (_, value) =>
+        {
+            if (value.State == PlayerState.Playing && Interlocked.Increment(ref playingCount) == 1) firstPlaying.TrySetResult();
+            else if (value.State == PlayerState.Playing) secondPlaying.TrySetResult();
+            if (value.State == PlayerState.Stopped) stopped.TrySetResult();
+        };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/first")), (nint)321);
+        api.Enqueue(new(MpvEventKind.FileLoaded));
+        await firstPlaying.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        api.Enqueue(new(MpvEventKind.EndFile));
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/second")), (nint)321);
+        api.Enqueue(new(MpvEventKind.FileLoaded));
+        await secondPlaying.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, api.CreateCalls);
+        Assert.Equal(2, playingCount);
+    }
+
+    [Fact]
+    public async Task FileLocalHeadersAreClearedBeforeMediaWithoutHeaders()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+        var sensitiveHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer private-token" };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/first"), sensitiveHeaders), (nint)654);
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/second")), (nint)654);
+
+        var values = api.Properties.Where(value => value.Name == "file-local-options/http-header-fields").Select(value => value.Value).ToArray();
+        Assert.Equal(2, values.Length);
+        Assert.Equal("Authorization: Bearer private-token", values[0]);
+        Assert.Equal(string.Empty, values[1]);
+        Assert.DoesNotContain(api.Options, value => value.Name == "http-header-fields");
     }
 
     [Fact]
@@ -62,7 +124,8 @@ public sealed class PlayerPhase3Tests
     {
         var api = new RecordingMpvApi();
         var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
-        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/private")), (nint)9876);
+        var signExtendedWindowHandle = unchecked((nint)(long)0xFFFFFFFF80000001);
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/private")), signExtendedWindowHandle);
 
         player.Play();
         player.Pause();
@@ -75,7 +138,7 @@ public sealed class PlayerPhase3Tests
         player.Stop();
         await player.DisposeAsync();
 
-        Assert.Contains(("wid", "9876"), api.Options);
+        Assert.Contains(("wid", "2147483649"), api.Options);
         Assert.Contains(("pause", "no"), api.Properties);
         Assert.Contains(("pause", "yes"), api.Properties);
         Assert.Contains(("time-pos", "12.5"), api.Properties);
@@ -84,6 +147,8 @@ public sealed class PlayerPhase3Tests
         Assert.Contains(("vid", "2"), api.Properties);
         Assert.Contains(("sid", "7"), api.Properties);
         Assert.Contains(("sid", "no"), api.Properties);
+        Assert.Contains("idle-active", api.ObservedProperties);
+        Assert.DoesNotContain("core-idle", api.ObservedProperties);
         Assert.True(api.Terminated);
         Assert.True(api.Disposed);
     }
@@ -128,17 +193,27 @@ public sealed class PlayerPhase3Tests
     private sealed class RecordingMpvApi : ILibMpvApi
     {
         private readonly ManualResetEventSlim _wakeup = new(false);
-        public ConcurrentBag<(string Name, string Value)> Options { get; } = [];
-        public ConcurrentBag<(string Name, string Value)> Properties { get; } = [];
+        private readonly ConcurrentQueue<MpvEventValue> _events = new();
+        public ConcurrentQueue<(string Name, string Value)> Options { get; } = [];
+        public ConcurrentQueue<(string Name, string Value)> Properties { get; } = [];
+        public ConcurrentQueue<string> ObservedProperties { get; } = [];
+        public int CreateCalls { get; private set; }
         public bool Terminated { get; private set; }
         public bool Disposed { get; private set; }
-        public nint Create() => (nint)55;
-        public int SetOptionString(nint handle, string name, string value) { Options.Add((name, value)); return 0; }
+        public nint Create() { CreateCalls++; return (nint)55; }
+        public int SetOptionString(nint handle, string name, string value) { Options.Enqueue((name, value)); return 0; }
         public int Initialize(nint handle) => 0;
         public int Command(nint handle, params string[] arguments) => 0;
-        public int SetPropertyString(nint handle, string name, string value) { Properties.Add((name, value)); return 0; }
-        public int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format) => 0;
-        public MpvEventValue WaitEvent(nint handle, double timeoutSeconds) { _wakeup.Wait(TimeSpan.FromSeconds(timeoutSeconds)); _wakeup.Reset(); return new(MpvEventKind.None); }
+        public int SetPropertyString(nint handle, string name, string value) { Properties.Enqueue((name, value)); return 0; }
+        public int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format) { ObservedProperties.Enqueue(name); return 0; }
+        public MpvEventValue WaitEvent(nint handle, double timeoutSeconds)
+        {
+            if (_events.TryDequeue(out var value)) return value;
+            _wakeup.Wait(TimeSpan.FromSeconds(timeoutSeconds));
+            _wakeup.Reset();
+            return _events.TryDequeue(out value) ? value : new(MpvEventKind.None);
+        }
+        public void Enqueue(MpvEventValue value) { _events.Enqueue(value); _wakeup.Set(); }
         public void Wakeup(nint handle) => _wakeup.Set();
         public void TerminateDestroy(nint handle) => Terminated = true;
         public void Dispose() { Disposed = true; _wakeup.Dispose(); }

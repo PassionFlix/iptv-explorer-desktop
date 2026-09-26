@@ -6,7 +6,8 @@ namespace IPTVExplorer.Player;
 public sealed class LibMpvLibraryLocator
 {
     public const string RelativeDirectory = "native/mpv";
-    public const string LibraryFileName = "mpv-2.dll";
+    public const string LibraryFileName = "libmpv-2.dll";
+    public const string FallbackLibraryFileName = "mpv-2.dll";
 
     public LibMpvLibraryLocator() : this(AppContext.BaseDirectory) { }
 
@@ -17,10 +18,14 @@ public sealed class LibMpvLibraryLocator
         var relative = Path.GetRelativePath(root, directory);
         if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             throw new InvalidOperationException("Le chemin du moteur vidéo est invalide.");
-        LibraryPath = Path.Combine(directory, LibraryFileName);
+        PrimaryLibraryPath = Path.Combine(directory, LibraryFileName);
+        FallbackLibraryPath = Path.Combine(directory, FallbackLibraryFileName);
+        LibraryPath = File.Exists(PrimaryLibraryPath) || !File.Exists(FallbackLibraryPath) ? PrimaryLibraryPath : FallbackLibraryPath;
     }
 
     public string LibraryPath { get; }
+    public string PrimaryLibraryPath { get; }
+    public string FallbackLibraryPath { get; }
 }
 
 internal enum MpvFormat
