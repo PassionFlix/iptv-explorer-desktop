@@ -47,7 +47,8 @@ public partial class App : Application
                     AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
                     ConnectTimeout = TimeSpan.FromSeconds(8),
                     PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-                    AllowAutoRedirect = false
+                    AllowAutoRedirect = false,
+                    UseCookies = false
                 });
 
             _host = builder.Build();

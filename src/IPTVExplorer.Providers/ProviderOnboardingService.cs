@@ -50,6 +50,7 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
     {
         var draft = GetDraft(draftId);
         var attempts = new List<(ProviderType Type, string Portal)>();
+        var failedAttempts = new List<string>();
         if (draft.RequestedType is "auto" or "xtream" && HasXtream(draft.Secret)) attempts.Add((ProviderType.Xtream, "/portal.php"));
         if (draft.RequestedType is "auto" or "stalker" && ValidMac().IsMatch(draft.Secret.MacAddress ?? string.Empty)) attempts.AddRange(StandardPortalPaths.Select(path => (ProviderType.Stalker, path)));
         foreach (var attempt in attempts)
@@ -61,7 +62,11 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
                 var client = await clients.CreateAsync(candidate, cancellationToken);
                 var stopwatch = Stopwatch.StartNew();
                 var result = await client.TestConnectionAsync(cancellationToken);
-                if (!result.Success) continue;
+                if (!result.Success)
+                {
+                    if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → {result.Message}");
+                    continue;
+                }
                 var account = await client.GetAccountInfoAsync(cancellationToken);
                 var live = (await client.GetLiveCategoriesAsync(cancellationToken)).ToArray();
                 var vod = (await client.GetVodCategoriesAsync(cancellationToken)).ToArray();
@@ -79,12 +84,19 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
                 return View(draft);
             }
             catch (OperationCanceledException) { throw; }
-            catch (HttpRequestException) { }
-            catch (System.Text.Json.JsonException) { }
-            catch (InvalidDataException) { }
+            catch (HttpRequestException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → connexion HTTP interrompue après le profil"); }
+            catch (System.Text.Json.JsonException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → JSON incompatible après le profil"); }
+            catch (InvalidDataException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → réponse incompatible après le profil"); }
             finally { await secrets.DeleteAsync(temporaryReference, CancellationToken.None); }
         }
-        draft = draft with { DetectedType = null, Message = "No compatible endpoint accepted the supplied credentials.", Diagnostic = null, Categories = null };
+        var failure = draft.RequestedType switch
+        {
+            "stalker" => "Impossible d’établir une session Stalker/MAG avec ce portail. Aucun endpoint Stalker standard compatible n’a répondu.",
+            "auto" when ValidMac().IsMatch(draft.Secret.MacAddress ?? string.Empty) => "Impossible d’établir une session compatible avec ce portail. Aucun endpoint Xtream ou Stalker/MAG standard n’a accepté les identifiants fournis.",
+            _ => "No compatible endpoint accepted the supplied credentials."
+        };
+        if (failedAttempts.Count > 0) failure += $" Détails techniques non sensibles : {string.Join(" ; ", failedAttempts)}.";
+        draft = draft with { DetectedType = null, Message = failure, Diagnostic = null, Categories = null };
         _drafts[draft.Id] = draft;
         return View(draft);
     }
@@ -139,8 +151,10 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
     {
         if (!Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo) || value.Length > 500) throw new ArgumentException("A valid HTTP(S) server URL without embedded credentials is required.");
         var builder = new UriBuilder(uri) { Query = string.Empty, Fragment = string.Empty };
-        if (builder.Path.EndsWith("/player_api.php", StringComparison.OrdinalIgnoreCase)) builder.Path = builder.Path[..^15];
-        if (builder.Path.EndsWith("/c/", StringComparison.OrdinalIgnoreCase)) builder.Path = builder.Path[..^2];
+        var path = builder.Path.TrimEnd('/');
+        if (path.EndsWith("/player_api.php", StringComparison.OrdinalIgnoreCase)) path = path[..^15].TrimEnd('/');
+        if (path.EndsWith("/c", StringComparison.OrdinalIgnoreCase)) path = path[..^2].TrimEnd('/');
+        builder.Path = path.Length == 0 ? "/" : path;
         return new Uri(builder.Uri.ToString().TrimEnd('/'));
     }
     [GeneratedRegex("^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")] internal static partial Regex ValidMac();

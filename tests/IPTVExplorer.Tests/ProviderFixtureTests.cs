@@ -90,6 +90,117 @@ public sealed class ProviderFixtureTests
     }
 
     [Fact]
+    public async Task StalkerHandshakeFollowsSameServerRedirectAndKeepsRequiredHeaders()
+    {
+        var handler = new StrictStalkerOnboardingHandler("/portal.php", redirectHandshake: true);
+        using var http = new HttpClient(handler);
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var result = await client.TestConnectionAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(2, handler.HandshakePaths.Count);
+        Assert.True(handler.SawCompatibleHandshake);
+        Assert.True(handler.SawCookieAndBearerAfterHandshake);
+    }
+
+    [Fact]
+    public async Task StalkerMacIsTrimmedUppercasedAndCookieEncoded()
+    {
+        const string normalizedMac = "AA:BB:CC:DD:EE:FF";
+        var handler = new StrictStalkerOnboardingHandler("/portal.php", expectedMac: normalizedMac);
+        using var http = new HttpClient(handler);
+        var client = new StalkerProviderClient(StalkerProvider, new ProviderSecret(MacAddress: "  aa:bb:cc:dd:ee:ff  "), http);
+
+        var result = await client.TestConnectionAsync();
+
+        Assert.True(result.Success);
+        Assert.True(handler.SawCompatibleHandshake);
+        Assert.True(handler.SawCookieAndBearerAfterHandshake);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/c")]
+    [InlineData("/c/")]
+    public async Task StalkerOnboardingNormalizesPortalEntryUrls(string suffix)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var handler = new StrictStalkerOnboardingHandler("/portal.php");
+        var secretStore = new InMemorySecretStore();
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(handler), secretStore);
+        var service = new ProviderOnboardingService(secretStore, database.Repository, factory);
+        var draft = service.AddDraft(new ProviderDraftInput("Stalker Fixture", "stalker", $"https://example.invalid{suffix}", null, null, StalkerSecret.MacAddress));
+
+        var tested = await service.TestAsync(draft.Id);
+
+        Assert.Equal(ProviderType.Stalker, tested.DetectedType);
+        Assert.Equal("https://example.invalid", tested.ServerUrl);
+        Assert.True(handler.SawCompatibleHandshake);
+        Assert.True(handler.SawCookieAndBearerAfterHandshake);
+    }
+
+    [Theory]
+    [InlineData("/portal.php", 1)]
+    [InlineData("/server/load.php", 2)]
+    [InlineData("/stalker_portal/server/load.php", 3)]
+    public async Task AutomaticOnboardingFallsBackAcrossStandardStalkerEndpoints(string acceptedPath, int expectedHandshakeAttempts)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var handler = new StrictStalkerOnboardingHandler(acceptedPath);
+        var secretStore = new InMemorySecretStore();
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(handler), secretStore);
+        var service = new ProviderOnboardingService(secretStore, database.Repository, factory);
+        var draft = service.AddDraft(new ProviderDraftInput("Automatic Fixture", "auto", "https://example.invalid/c/", null, null, StalkerSecret.MacAddress));
+
+        var tested = await service.TestAsync(draft.Id);
+
+        Assert.Equal(ProviderType.Stalker, tested.DetectedType);
+        Assert.Equal(acceptedPath, handler.SuccessfulPath);
+        Assert.Equal(expectedHandshakeAttempts, handler.HandshakePaths.Count);
+        Assert.True(handler.SawCompatibleHandshake);
+        Assert.True(handler.SawCookieAndBearerAfterHandshake);
+    }
+
+    [Fact]
+    public async Task AutomaticOnboardingSkipsHttp200WithIncompatibleProfile()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var handler = new StrictStalkerOnboardingHandler("/server/load.php", incompatibleProfilePath: "/portal.php");
+        var secretStore = new InMemorySecretStore();
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(handler), secretStore);
+        var service = new ProviderOnboardingService(secretStore, database.Repository, factory);
+        var draft = service.AddDraft(new ProviderDraftInput("Profile Fallback Fixture", "auto", "https://example.invalid", null, null, StalkerSecret.MacAddress));
+
+        var tested = await service.TestAsync(draft.Id);
+
+        Assert.Equal(ProviderType.Stalker, tested.DetectedType);
+        Assert.Equal("/server/load.php", handler.SuccessfulPath);
+        Assert.Equal(["/portal.php", "/server/load.php"], handler.HandshakePaths);
+    }
+
+    [Fact]
+    public async Task FailedStalkerOnboardingReturnsOnlySafeFrenchDiagnostics()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var handler = new StrictStalkerOnboardingHandler("/unsupported.php");
+        var secretStore = new InMemorySecretStore();
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(handler), secretStore);
+        var service = new ProviderOnboardingService(secretStore, database.Repository, factory);
+        var draft = service.AddDraft(new ProviderDraftInput("Rejected Fixture", "stalker", "https://example.invalid/c", null, null, StalkerSecret.MacAddress));
+
+        var tested = await service.TestAsync(draft.Id);
+
+        Assert.Null(tested.DetectedType);
+        Assert.StartsWith("Impossible d’établir une session Stalker/MAG", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/portal.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/server/load.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/stalker_portal/server/load.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(StalkerSecret.MacAddress!, tested.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-token", tested.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task OnboardingHandlesLargeCategoryFixtureWithoutPersistingSecrets()
     {
         await using var database = await TestDatabase.CreateAsync();
@@ -185,6 +296,55 @@ public sealed class ProviderFixtureTests
             if (Parameter(request.RequestUri, "action") == "handshake") { Handshakes++; return Task.FromResult(Json($"{{\"js\":{{\"token\":\"token-{Handshakes}\"}}}}")); }
             if (request.Headers.Authorization?.Parameter == "token-1") return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
             return Task.FromResult(Json("{\"js\":{\"id\":\"profile-1\",\"auth\":\"1\"}}"));
+        }
+    }
+
+    private sealed class StrictStalkerOnboardingHandler(string acceptedPath, bool redirectHandshake = false, string expectedMac = "00:00:00:00:00:00", string? incompatibleProfilePath = null) : HttpMessageHandler
+    {
+        public List<string> HandshakePaths { get; } = [];
+        public string? SuccessfulPath { get; private set; }
+        public bool SawCompatibleHandshake { get; private set; }
+        public bool SawCookieAndBearerAfterHandshake { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var action = Parameter(request.RequestUri, "action");
+            if (action == "handshake") HandshakePaths.Add(path);
+            var isAcceptedPath = string.Equals(path, acceptedPath, StringComparison.Ordinal);
+            var hasIncompatibleProfile = string.Equals(path, incompatibleProfilePath, StringComparison.Ordinal);
+            if (!isAcceptedPath && !hasIncompatibleProfile) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            if (action == "handshake" && redirectHandshake && Parameter(request.RequestUri, "redirected") != "1")
+            {
+                var destination = new UriBuilder(request.RequestUri!) { Query = request.RequestUri!.Query.TrimStart('?') + "&redirected=1" };
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = destination.Uri } });
+            }
+
+            var expectedCookie = $"mac={Uri.EscapeDataString(expectedMac)}; stb_lang=fr; timezone=Europe%2FParis";
+            var hasCookie = request.Headers.TryGetValues("Cookie", out var cookies) && string.Join("; ", cookies) == expectedCookie;
+            var hasAccept = request.Headers.TryGetValues("Accept", out var accept) && string.Join(", ", accept).Contains("application/json", StringComparison.Ordinal);
+            var hasUserAgent = request.Headers.TryGetValues("User-Agent", out var agents) && string.Join(" ", agents) == "Mozilla/5.0 MAG254 stbapp";
+            var hasXUserAgent = request.Headers.TryGetValues("X-User-Agent", out var xAgents) && string.Join(" ", xAgents) == "Model: MAG254; Link: Ethernet";
+            var commonHeadersAreCompatible = hasCookie && hasAccept && hasUserAgent && hasXUserAgent;
+
+            if (action == "handshake")
+            {
+                SawCompatibleHandshake = commonHeadersAreCompatible && Parameter(request.RequestUri, "token") == string.Empty && request.Headers.Authorization is null;
+                return Task.FromResult(SawCompatibleHandshake ? Json("{\"js\":{\"token\":\"fixture-token\"}}") : new HttpResponseMessage(HttpStatusCode.Forbidden));
+            }
+
+            var hasBearer = request.Headers.Authorization?.Scheme == "Bearer" && request.Headers.Authorization.Parameter == "fixture-token";
+            if (!commonHeadersAreCompatible || !hasBearer) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            if (hasIncompatibleProfile && action == "get_profile") return Task.FromResult(Json("{\"js\":{\"auth\":\"1\"}}"));
+            SawCookieAndBearerAfterHandshake = true;
+            SuccessfulPath = path;
+            var json = action switch
+            {
+                "get_profile" => "{\"js\":{\"id\":\"profile-1\",\"auth\":\"1\",\"status\":\"Active\"}}",
+                "get_genres" => "{\"js\":[{\"id\":\"10\",\"title\":\"Fixture category\"}]}",
+                _ => "{\"js\":{}}"
+            };
+            return Task.FromResult(Json(json));
         }
     }
 

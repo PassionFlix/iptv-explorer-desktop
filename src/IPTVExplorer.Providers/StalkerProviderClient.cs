@@ -15,15 +15,20 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     public async Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken = default)
     {
         try { var account = await GetAccountInfoAsync(cancellationToken); return new(account.Authenticated, Type, account.Authenticated ? "Connection successful." : "Profile rejected."); }
+        catch (StalkerResponseException exception) { return new(false, Type, exception.Diagnostic); }
         catch (HttpRequestException) { return new(false, Type, "Provider endpoint is unavailable."); }
         catch (JsonException) { return new(false, Type, "Provider returned invalid JSON."); }
+        catch (InvalidDataException) { return new(false, Type, "Provider returned an incompatible Stalker response."); }
+        catch (StalkerSessionExpiredException) { return new(false, Type, "Provider rejected the Stalker session."); }
     }
 
     public async Task<AccountInfo> GetAccountInfoAsync(CancellationToken cancellationToken = default)
     {
         using var document = await PortalAsync("stb", "get_profile", [], cancellationToken);
         var root = document.RootElement.Unwrap();
-        var authenticated = root.ValueKind == JsonValueKind.Object && (root.Text("auth") == "1" || !string.IsNullOrWhiteSpace(root.Text("id", "user_id")));
+        var hasProfileId = root.ValueKind == JsonValueKind.Object && !string.IsNullOrWhiteSpace(root.Text("id", "user_id"));
+        var rejected = root.Text("auth") == "0" || root.Text("blocked") == "1";
+        var authenticated = hasProfileId && !rejected;
         return new AccountInfo(authenticated, root.Text("status"), null);
     }
 
@@ -207,24 +212,53 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         values.AddRange(parameters);
         var endpoint = new Uri(provider.ServerUri.GetLeftPart(UriPartial.Authority) + "/" + provider.PortalPath.TrimStart('/'));
         var uri = XtreamProviderClient.BuildUri(endpoint, values);
-        using var response = await HttpRetry.SendAsync(http, () =>
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.TryAddWithoutValidation("Cookie", $"mac={Uri.EscapeDataString(mac)}; stb_lang=en; timezone=UTC");
-            request.Headers.Referrer = new Uri(provider.ServerUri.GetLeftPart(UriPartial.Authority) + "/c/");
-            request.Headers.TryAddWithoutValidation("X-User-Agent", "Model: MAG254; Link: Ethernet");
-            if (includeToken && _token is not null) request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
-            return request;
-        }, cancellationToken);
+        using var response = await SendWithRedirectsAsync(uri, mac, includeToken, cancellationToken);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             _token = null;
-            throw new StalkerSessionExpiredException();
+            if (includeToken) throw new StalkerSessionExpiredException();
+            throw StalkerResponseException.For(action, response);
         }
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode) throw StalkerResponseException.For(action, response);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        try { return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken); }
+        catch (JsonException exception) { throw StalkerResponseException.For(action, response, "JSON incompatible", exception); }
     }
+
+    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, CancellationToken cancellationToken)
+    {
+        const int maxRedirects = 3;
+        var uri = initialUri;
+        for (var redirect = 0; ; redirect++)
+        {
+            var response = await HttpRetry.SendAsync(http, () => CreateRequest(uri, mac, includeToken), cancellationToken);
+            if (!IsRedirect(response.StatusCode) || response.Headers.Location is null) return response;
+            if (redirect >= maxRedirects)
+            {
+                response.Dispose();
+                throw new HttpRequestException("Stalker endpoint exceeded the redirect limit.");
+            }
+
+            var destination = response.Headers.Location.IsAbsoluteUri ? response.Headers.Location : new Uri(uri, response.Headers.Location);
+            response.Dispose();
+            if (destination.Scheme is not ("http" or "https") || !string.Equals(destination.IdnHost, initialUri.IdnHost, StringComparison.OrdinalIgnoreCase))
+                throw new HttpRequestException("Stalker endpoint redirected outside its server.");
+            uri = destination;
+        }
+    }
+
+    private HttpRequestMessage CreateRequest(Uri uri, string mac, bool includeToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json, text/javascript, */*; q=0.01");
+        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 MAG254 stbapp");
+        request.Headers.TryAddWithoutValidation("X-User-Agent", "Model: MAG254; Link: Ethernet");
+        request.Headers.TryAddWithoutValidation("Cookie", $"mac={Uri.EscapeDataString(mac)}; stb_lang=fr; timezone={Uri.EscapeDataString("Europe/Paris")}");
+        if (includeToken && _token is not null) request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
+        return request;
+    }
+
+    private static bool IsRedirect(HttpStatusCode status) => status is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
 
     private static string NormalizeMac(string? mac)
     {
@@ -243,4 +277,16 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     }
     private static double? ParseRating(string? value) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rating) ? rating : null;
     private sealed class StalkerSessionExpiredException : Exception { }
+    private sealed class StalkerResponseException(string diagnostic, Exception? innerException = null) : Exception(diagnostic, innerException)
+    {
+        public string Diagnostic { get; } = diagnostic;
+
+        public static StalkerResponseException For(string action, HttpResponseMessage response, string? detail = null, Exception? innerException = null)
+        {
+            var phase = action switch { "handshake" => "handshake", "get_profile" => "profile", _ => action };
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "type inconnu";
+            var suffix = detail is null ? string.Empty : $", {detail}";
+            return new StalkerResponseException($"{phase} HTTP {(int)response.StatusCode} ({contentType}){suffix}", innerException);
+        }
+    }
 }
