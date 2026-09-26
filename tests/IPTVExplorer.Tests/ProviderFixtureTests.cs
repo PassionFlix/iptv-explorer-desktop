@@ -80,6 +80,130 @@ public sealed class ProviderFixtureTests
     }
 
     [Fact]
+    public async Task StalkerLiveCategoryFiltering()
+    {
+        var handler = new StalkerRegressionHandler();
+        using var http = new HttpClient(handler);
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var category1 = await client.GetLiveAsync("1");
+        var category2 = await client.GetLiveAsync("2");
+
+        Assert.Equal(["channel-a", "channel-b"], category1.Select(item => item.Id));
+        Assert.Equal(["channel-c", "channel-d"], category2.Select(item => item.Id));
+        Assert.Empty(category1.Select(item => item.Id).Intersect(category2.Select(item => item.Id), StringComparer.Ordinal));
+        Assert.Equal(1, handler.AllChannelsRequests);
+        Assert.False(handler.GenreParameterWasSent);
+    }
+
+    [Fact]
+    public async Task StalkerVodDifferentIdsReturnDifferentDetails()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var filmA = await client.GetVodDetailsAsync("101");
+        var filmB = await client.GetVodDetailsAsync("202");
+
+        Assert.Equal(("Film A", "poster-a", "Plot A"), (filmA.Title, filmA.Poster, filmA.Plot));
+        Assert.Equal(("Film B", "poster-b", "Plot B"), (filmB.Title, filmB.Poster, filmB.Plot));
+        Assert.NotEqual(filmA.Id, filmB.Id);
+    }
+
+    [Fact]
+    public async Task StalkerVodDetailCacheIsMediaSpecific()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+        _ = await client.GetVodDetailsAsync("101");
+        _ = await client.GetVodDetailsAsync("202");
+
+        var filmA = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Vod, "101"));
+        var filmB = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Vod, "202"));
+
+        Assert.EndsWith("/film-a", filmA.Uri.AbsoluteUri, StringComparison.Ordinal);
+        Assert.EndsWith("/film-b", filmB.Uri.AbsoluteUri, StringComparison.Ordinal);
+        Assert.NotEqual(filmA.Uri, filmB.Uri);
+    }
+
+    [Fact]
+    public async Task StalkerVodMissingIdDoesNotReturnFirstItem()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => client.GetVodDetailsAsync("missing"));
+
+        Assert.Equal("Contenu introuvable.", exception.Message);
+    }
+
+    [Fact]
+    public async Task StalkerSeriesMapsDistinctSeasons()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var detail = await client.GetSeriesDetailsAsync("series-1");
+
+        Assert.Equal([1, 2], detail.Seasons.Select(season => season.Number));
+        Assert.Equal(["Saison 1", "Saison 2"], detail.Seasons.Select(season => season.Title));
+    }
+
+    [Fact]
+    public async Task StalkerSeriesMapsEpisodes()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var detail = await client.GetSeriesDetailsAsync("series-1");
+
+        Assert.Equal(["s1e1", "s1e2"], detail.Seasons[0].Episodes.Select(episode => episode.Id));
+        Assert.Equal("s2e1", Assert.Single(detail.Seasons[1].Episodes).Id);
+    }
+
+    [Fact]
+    public async Task StalkerEpisodeMediaReferenceUsesEpisodeIdentity()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+        var detail = await client.GetSeriesDetailsAsync("series-1");
+        var episodes = detail.Seasons.SelectMany(season => season.Episodes).ToArray();
+
+        var first = new MediaReference(StalkerProvider.Key, CatalogType.Series, detail.Id, episodes[0].Id, episodes[0].Extension);
+        var second = new MediaReference(StalkerProvider.Key, CatalogType.Series, detail.Id, episodes[1].Id, episodes[1].Extension);
+
+        Assert.Equal("series-1", first.MediaId);
+        Assert.Equal("s1e1", first.EpisodeId);
+        Assert.Equal("s1e2", second.EpisodeId);
+        Assert.NotEqual(first, second);
+        Assert.DoesNotContain("http", first.EpisodeId!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task StalkerHtmlEntitiesAreDisplayDecoded()
+    {
+        using var http = new HttpClient(new StalkerRegressionHandler());
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var category = Assert.Single(await client.GetLiveCategoriesAsync());
+
+        Assert.Equal("live-html", category.RemoteId);
+        Assert.Equal("CHILE & BOLIVIA", category.Name);
+    }
+
+    [Fact]
+    public async Task SharedChangesDoNotRegressXtreamFixtures()
+    {
+        using var http = new HttpClient(new XtreamFixtureHandler());
+        var client = new XtreamProviderClient(XtreamProvider, XtreamSecret, http);
+
+        Assert.Equal("101", Assert.Single(await client.GetLiveAsync("10")).Id);
+        Assert.Equal(["201", "202"], (await client.GetVodPageAsync("20", 1)).Items.Select(item => item.Id));
+        Assert.Equal("Fixture Film", (await client.GetVodDetailsAsync("201")).Title);
+        Assert.Equal("episode-501", Assert.Single(Assert.Single((await client.GetSeriesDetailsAsync("301")).Seasons).Episodes).Id);
+    }
+
+    [Fact]
     public async Task StalkerExpiredTokenTriggersSingleReauthentication()
     {
         var handler = new ExpiringTokenHandler(); using var http = new HttpClient(handler);
@@ -369,6 +493,47 @@ public sealed class ProviderFixtureTests
             if (action == "create_link") { CreateLinkUsedSeriesFlag = Parameter(request.RequestUri, "series") == "1"; return Task.FromResult(Json("{\"js\":{\"cmd\":\"ffmpeg https://media.example.invalid/stream/episode-7\"}}")); }
             if (action == "get_ordered_list" && Parameter(request.RequestUri, "movie_id") is not null) return Task.FromResult(Json("{\"js\":{\"data\":[{\"id\":\"episode-7\",\"name\":\"Episode Seven\",\"season\":1,\"episode\":7,\"cmd\":\"ffmpeg http://internal.invalid/episode-7\"}],\"total_items\":1,\"max_page_items\":14,\"cur_page\":1}}"));
             if (action == "get_ordered_list") { var page = Parameter(request.RequestUri, "p") ?? "1"; OrderedPages.Add(page); var idField = type == "series" ? "series_id" : "id"; return Task.FromResult(Json($"{{\"js\":{{\"data\":[{{\"{idField}\":\"item-{page}\",\"name\":\"Fixture {page}\",\"cmd\":\"ffmpeg http://internal.invalid/{page}\"}}],\"total_items\":2684,\"max_page_items\":14,\"cur_page\":{page}}}}}")); }
+            return Task.FromResult(Json("{\"js\":{}}"));
+        }
+    }
+
+    private sealed class StalkerRegressionHandler : HttpMessageHandler
+    {
+        public int AllChannelsRequests { get; private set; }
+        public bool GenreParameterWasSent { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var action = Parameter(request.RequestUri, "action");
+            var type = Parameter(request.RequestUri, "type");
+            if (action == "handshake") return Task.FromResult(Json("{\"js\":{\"token\":\"fixture-token\"}}"));
+            if (action == "get_genres") return Task.FromResult(Json("{\"js\":[{\"id\":\"live-html\",\"title\":\"CHILE &amp; BOLIVIA\"}]}"));
+            if (action == "get_all_channels")
+            {
+                AllChannelsRequests++;
+                GenreParameterWasSent |= Parameter(request.RequestUri, "genre") is not null;
+                return Task.FromResult(Json("{\"js\":{\"data\":[" +
+                    "{\"id\":\"channel-a\",\"name\":\"Channel A\",\"tv_genre_id\":\"1\"}," +
+                    "{\"id\":\"channel-b\",\"name\":\"Channel B\",\"tv_genre_id\":1}," +
+                    "{\"id\":\"channel-c\",\"name\":\"Channel C\",\"tv_genre_id\":\"2\"}," +
+                    "{\"id\":\"channel-d\",\"name\":\"Channel D\",\"tv_genre_id\":2}]}}"));
+            }
+            if (action == "get_ordered_list" && type == "series")
+                return Task.FromResult(Json("{\"js\":{\"data\":[{\"id\":\"series-1\",\"name\":\"Fixture Series\",\"cover\":\"series-poster\",\"cmd\":\"ffmpeg http://internal.invalid/series\",\"series\":{\"1\":[1,2],\"2\":[1]}}],\"total_items\":1,\"max_page_items\":14,\"cur_page\":1}}"));
+            if (action == "get_ordered_list" && type == "vod")
+            {
+                var requested = Parameter(request.RequestUri, "movie_id");
+                var filmA = "{\"id\":\"101\",\"name\":\"Film A\",\"screenshot_uri\":\"poster-a\",\"description\":\"Plot A\",\"cmd\":\"ffmpeg http://internal.invalid/film-a\"}";
+                var filmB = "{\"movie_id\":\"202\",\"name\":\"Film B\",\"screenshot_uri\":\"poster-b\",\"description\":\"Plot B\",\"cmd\":\"ffmpeg http://internal.invalid/film-b\"}";
+                var data = requested == "101" ? $"{filmB},{filmA}" : $"{filmA},{filmB}";
+                return Task.FromResult(Json($"{{\"js\":{{\"data\":[{data}],\"total_items\":2,\"max_page_items\":14,\"cur_page\":1}}}}"));
+            }
+            if (action == "create_link")
+            {
+                var command = Parameter(request.RequestUri, "cmd") ?? string.Empty;
+                var suffix = command.Contains("film-a", StringComparison.Ordinal) ? "film-a" : command.Contains("film-b", StringComparison.Ordinal) ? "film-b" : "series";
+                return Task.FromResult(Json($"{{\"js\":{{\"cmd\":\"ffmpeg https://media.example.invalid/{suffix}\"}}}}"));
+            }
             return Task.FromResult(Json("{\"js\":{}}"));
         }
     }

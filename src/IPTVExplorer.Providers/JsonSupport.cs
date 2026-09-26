@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using IPTVExplorer.Core;
 
@@ -49,9 +50,10 @@ internal static class JsonSupport
             var name = item.Text("category_name", "name", "title");
             if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
             {
-                var normalized = InfrastructureCompatibleNormalize(name);
+                var displayName = WebUtility.HtmlDecode(name);
+                var normalized = InfrastructureCompatibleNormalize(displayName);
                 var technical = normalized is "ALL" or "ALL CHANNELS" or "ALL MOVIES" or "ALL SERIES" || id is "*" or "0";
-                result.Add(new ProviderCategory(id, name, normalized, Technical: technical));
+                result.Add(new ProviderCategory(id, displayName, normalized, Technical: technical));
             }
         }
         return result;

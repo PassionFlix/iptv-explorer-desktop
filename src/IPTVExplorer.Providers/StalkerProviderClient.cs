@@ -6,9 +6,13 @@ namespace IPTVExplorer.Providers;
 
 public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecret secret, HttpClient http) : IProviderClient
 {
+    private static readonly TimeSpan LiveCatalogCacheDuration = TimeSpan.FromMinutes(5);
     private readonly SemaphoreSlim _handshake = new(1, 1);
+    private readonly SemaphoreSlim _liveCatalogLock = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(CatalogType Catalog, string Id), string> _commands = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _categoryStructures = new(StringComparer.Ordinal);
+    private IReadOnlyList<LiveChannel>? _liveChannels;
+    private DateTimeOffset _liveChannelsExpiresAt;
     private string? _token; // Session-only by design. Never expose or persist this value.
 
     public ProviderType Type => ProviderType.Stalker;
@@ -47,8 +51,8 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 
     public async Task<IReadOnlyList<CatalogItem>> GetLiveAsync(string categoryId, CancellationToken cancellationToken = default)
     {
-        using var document = await PortalAsync("itv", "get_all_channels", [("genre", categoryId)], cancellationToken);
-        return ReadItems(document.RootElement, CatalogType.Live);
+        var channels = await GetAllLiveChannelsAsync(cancellationToken);
+        return channels.Where(channel => string.Equals(channel.GenreId, categoryId, StringComparison.Ordinal)).Select(channel => channel.Item).ToArray();
     }
 
     public Task<CatalogPage<CatalogItem>> GetVodPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => OrderedList("vod", CatalogType.Vod, categoryId, page, cancellationToken);
@@ -57,7 +61,11 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     public async Task<CatalogItem> GetVodInfoAsync(string id, CancellationToken cancellationToken = default)
     {
         using var document = await PortalAsync("vod", "get_ordered_list", [("movie_id", id), ("p", "1")], cancellationToken);
-        return ReadItems(document.RootElement, CatalogType.Vod).FirstOrDefault() ?? new CatalogItem(id, "Untitled");
+        var item = FindMediaRecord(document.RootElement, CatalogType.Vod, id);
+        if (item.ValueKind == JsonValueKind.Undefined) throw ContentNotFound();
+        var result = JsonSupport.Item(item, CatalogType.Vod);
+        CacheCommand(item, CatalogType.Vod, result.Id);
+        return result;
     }
 
     public async Task<CatalogItem> GetSeriesInfoAsync(string id, CancellationToken cancellationToken = default)
@@ -69,8 +77,8 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     public async Task<VodDetails> GetVodDetailsAsync(string id, CancellationToken cancellationToken = default)
     {
         using var document = await PortalAsync("vod", "get_ordered_list", [("movie_id", id), ("p", "1")], cancellationToken);
-        var item = ReadRawItems(document.RootElement).FirstOrDefault();
-        if (item.ValueKind == JsonValueKind.Undefined) return new VodDetails(id, "Untitled", null, null, null, null, null, null, null, null, null);
+        var item = FindMediaRecord(document.RootElement, CatalogType.Vod, id);
+        if (item.ValueKind == JsonValueKind.Undefined) throw ContentNotFound();
         CacheCommand(item, CatalogType.Vod, id);
         return new VodDetails(id, item.Text("name", "title") ?? "Untitled", item.Text("screenshot_uri", "cover", "logo"), item.Text("description", "plot"), item.Text("year"), item.Text("genres_str", "genre"), item.Text("director"), item.Text("actors", "cast"), item.Text("time", "duration"), ParseRating(item.Text("rating", "kinopoisk_rating")), item.Text("container_extension"));
     }
@@ -95,19 +103,9 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         }
         while (page <= totalPages);
         var first = records.FirstOrDefault();
-        var grouped = new SortedDictionary<int, List<EpisodeDetails>>();
-        foreach (var record in records)
-        {
-            var episodeId = record.Text("id", "episode_id");
-            if (string.IsNullOrWhiteSpace(episodeId)) continue;
-            var season = int.TryParse(record.Text("season", "season_number"), out var seasonNumber) ? seasonNumber : 1;
-            int? episode = int.TryParse(record.Text("episode", "episode_num"), out var episodeNumber) ? episodeNumber : null;
-            if (!grouped.TryGetValue(season, out var list)) grouped[season] = list = [];
-            list.Add(new EpisodeDetails(episodeId, record.Text("name", "title") ?? $"Episode {episode}", season, episode, record.Text("container_extension")));
-            CacheCommand(record, CatalogType.Series, episodeId);
-        }
-        var seasons = grouped.Select(pair => new SeasonDetails(pair.Key, $"Season {pair.Key}", pair.Value)).ToArray();
-        return new SeriesDetails(id, first.ValueKind == JsonValueKind.Undefined ? "Untitled" : first.Text("name", "title") ?? "Untitled", first.ValueKind == JsonValueKind.Undefined ? null : first.Text("screenshot_uri", "cover"), first.ValueKind == JsonValueKind.Undefined ? null : first.Text("description", "plot"), first.ValueKind == JsonValueKind.Undefined ? null : first.Text("year"), first.ValueKind == JsonValueKind.Undefined ? null : first.Text("genres_str", "genre"), first.ValueKind == JsonValueKind.Undefined ? null : first.Text("director"), first.ValueKind == JsonValueKind.Undefined ? null : first.Text("actors", "cast"), first.ValueKind == JsonValueKind.Undefined ? null : ParseRating(first.Text("rating")), seasons);
+        if (first.ValueKind == JsonValueKind.Undefined) throw ContentNotFound();
+        var seasons = MapSeriesSeasons(records);
+        return new SeriesDetails(id, first.Text("name", "title") ?? "Untitled", first.Text("screenshot_uri", "cover"), first.Text("description", "plot"), first.Text("year"), first.Text("genres_str", "genre"), first.Text("director"), first.Text("actors", "cast"), ParseRating(first.Text("rating")), seasons);
     }
 
     public async Task<ResolvedMedia> ResolveMediaAsync(MediaRequest request, CancellationToken cancellationToken = default)
@@ -131,6 +129,37 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
             throw new StalkerPayloadStructureException(action, structure);
         _categoryStructures[type] = $"{type}/{action}: {structure}";
         return categories;
+    }
+
+    private async Task<IReadOnlyList<LiveChannel>> GetAllLiveChannelsAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_liveChannels is not null && now < _liveChannelsExpiresAt) return _liveChannels;
+
+        await _liveCatalogLock.WaitAsync(cancellationToken);
+        try
+        {
+            now = DateTimeOffset.UtcNow;
+            if (_liveChannels is not null && now < _liveChannelsExpiresAt) return _liveChannels;
+            using var document = await PortalAsync("itv", "get_all_channels", [], cancellationToken);
+            var channels = new List<LiveChannel>();
+            foreach (var raw in ReadRawItems(document.RootElement))
+            {
+                var genreId = raw.Text("tv_genre_id");
+                if (string.IsNullOrWhiteSpace(genreId)) continue;
+                var item = JsonSupport.Item(raw, CatalogType.Live);
+                if (item.Id.Length == 0) continue;
+                CacheCommand(raw, CatalogType.Live, item.Id);
+                channels.Add(new LiveChannel(genreId, item));
+            }
+            _liveChannels = channels;
+            _liveChannelsExpiresAt = now.Add(LiveCatalogCacheDuration);
+            return channels;
+        }
+        finally
+        {
+            _liveCatalogLock.Release();
+        }
     }
 
     private async Task<CatalogPage<CatalogItem>> OrderedList(string type, CatalogType catalog, string categoryId, int page, CancellationToken cancellationToken)
@@ -165,6 +194,112 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         if (root.ValueKind != JsonValueKind.Array) return [];
         return root.EnumerateArray().Select(value => value.Clone()).ToArray();
     }
+
+    private static JsonElement FindMediaRecord(JsonElement root, CatalogType catalog, string id)
+    {
+        foreach (var item in ReadRawItems(root))
+        {
+            var candidate = catalog switch
+            {
+                CatalogType.Vod => item.Text("id", "movie_id", "stream_id"),
+                CatalogType.Series => item.Text("id", "movie_id", "series_id"),
+                _ => item.Text("id", "stream_id")
+            };
+            if (string.Equals(candidate, id, StringComparison.Ordinal)) return item;
+        }
+        return default;
+    }
+
+    private IReadOnlyList<SeasonDetails> MapSeriesSeasons(IReadOnlyList<JsonElement> records)
+    {
+        var episodes = new Dictionary<(int Season, string Id), EpisodeDetails>();
+        for (var recordIndex = 0; recordIndex < records.Count; recordIndex++)
+        {
+            var record = records[recordIndex];
+            var defaultSeason = PositiveNumber(record.Text("season", "season_number"), 1);
+            if (record.ValueKind == JsonValueKind.Object && record.TryGetProperty("series", out var series))
+            {
+                ReadSeriesNode(series, defaultSeason, record, episodes);
+                continue;
+            }
+
+            if (records.Count > 1 || record.Text("episode", "episode_num", "episode_number") is not null)
+                AddEpisode(record, defaultSeason, recordIndex + 1, record, episodes);
+        }
+
+        return episodes.Values
+            .GroupBy(episode => episode.Season ?? 1)
+            .OrderBy(group => group.Key)
+            .Select(group => new SeasonDetails(group.Key, $"Saison {group.Key}", group.OrderBy(episode => episode.Episode ?? int.MaxValue).ThenBy(episode => episode.Title, StringComparer.Ordinal).ToArray()))
+            .ToArray();
+    }
+
+    private void ReadSeriesNode(JsonElement node, int defaultSeason, JsonElement parent, Dictionary<(int Season, string Id), EpisodeDetails> episodes)
+    {
+        if (node.ValueKind == JsonValueKind.Object)
+        {
+            if (LooksLikeEpisode(node))
+            {
+                AddEpisode(node, defaultSeason, episodes.Count + 1, parent, episodes);
+                return;
+            }
+
+            foreach (var property in node.EnumerateObject())
+            {
+                var season = PositiveNumber(property.Name, defaultSeason);
+                ReadSeasonValues(property.Value, season, parent, episodes);
+            }
+            return;
+        }
+
+        ReadSeasonValues(node, defaultSeason, parent, episodes);
+    }
+
+    private void ReadSeasonValues(JsonElement values, int season, JsonElement parent, Dictionary<(int Season, string Id), EpisodeDetails> episodes)
+    {
+        if (values.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var value in values.EnumerateArray())
+            {
+                index++;
+                AddEpisode(value, season, index, parent, episodes);
+            }
+            return;
+        }
+
+        if (values.ValueKind == JsonValueKind.Object && !LooksLikeEpisode(values))
+        {
+            foreach (var property in values.EnumerateObject())
+                AddEpisode(property.Value, season, PositiveNumber(property.Name, episodes.Count + 1), parent, episodes);
+            return;
+        }
+
+        AddEpisode(values, season, episodes.Count + 1, parent, episodes);
+    }
+
+    private void AddEpisode(JsonElement value, int season, int fallbackNumber, JsonElement parent, Dictionary<(int Season, string Id), EpisodeDetails> episodes)
+    {
+        var record = value.ValueKind == JsonValueKind.Object ? value : default;
+        var scalarNumber = value.ValueKind is JsonValueKind.Number or JsonValueKind.String ? value.ToString() : null;
+        var number = PositiveNumber(record.Text("episode_num", "episode_number", "episode") ?? scalarNumber, fallbackNumber);
+        season = Math.Max(1, PositiveNumber(record.Text("season", "season_number"), season));
+        var id = record.Text("id", "episode_id");
+        if (string.IsNullOrWhiteSpace(id)) id = $"s{season}e{number}";
+        var title = record.Text("name", "title") ?? $"Épisode {number}";
+        var extension = record.Text("container_extension") ?? parent.Text("container_extension");
+        episodes[(season, id)] = new EpisodeDetails(id, title, season, number, extension);
+
+        var command = record.Text("cmd", "command") ?? parent.Text("cmd", "command");
+        if (!string.IsNullOrWhiteSpace(command)) _commands[(CatalogType.Series, id)] = command;
+    }
+
+    private static bool LooksLikeEpisode(JsonElement value) => value.ValueKind == JsonValueKind.Object &&
+        (value.Text("id", "episode_id", "episode", "episode_num", "episode_number", "cmd", "command") is not null);
+
+    private static int PositiveNumber(string? value, int fallback) => int.TryParse(value, out var number) && number > 0 ? number : Math.Max(1, fallback);
+
+    private static KeyNotFoundException ContentNotFound() => new("Contenu introuvable.");
 
     private void CacheCommand(JsonElement item, CatalogType catalog, string fallbackId)
     {
@@ -289,6 +424,7 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri : null;
     }
     private static double? ParseRating(string? value) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rating) ? rating : null;
+    private sealed record LiveChannel(string GenreId, CatalogItem Item);
     private sealed class StalkerSessionExpiredException : Exception { }
     private sealed class StalkerResponseException(string diagnostic, Exception? innerException = null) : Exception(diagnostic, innerException)
     {

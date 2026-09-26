@@ -134,35 +134,47 @@
     const image = document.createElement('img'); image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.alt = ''; image.src = url; image.addEventListener('error', () => { image.remove(); holder.textContent = title.slice(0, 1).toUpperCase(); }, { once: true }); holder.append(image); return holder;
   }
   function renderCatalogItems(catalog, items) {
-    const grid = $(`#${catalog} .catalog-grid`); grid.replaceChildren();
+    const grid = $(`#${catalog} .catalog-grid`), providerKey = state.activeProviderKey; grid.replaceChildren();
     items.forEach(item => {
+      const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id, extension: item.extension });
       if (catalog === 'live') {
         const card = node('article', 'media-card live-card'); const visual = imageOrPlaceholder(item.imageUrl, item.title, 'channel-logo');
-        const title = node('strong', '', item.title); const play = button('Lire', 'play-small', event => { event.stopPropagation(); openPlayer({ providerKey: state.activeProviderKey, mediaType: 'live', mediaId: item.id, extension: item.extension }, item.title); });
+        const title = node('strong', '', item.title); const play = button('Lire', 'play-small', event => { event.stopPropagation(); openPlayer(reference, item.title); });
         card.append(visual, title, play); grid.append(card); return;
       }
       const card = node('article', 'media-card'); card.append(imageOrPlaceholder(item.imageUrl, item.title));
       const copy = node('div', 'media-copy'); copy.append(node('strong', '', item.title), node('small', '', [item.year, item.rating ? `★ ${item.rating}` : null].filter(Boolean).join(' · ') || 'Détails')); card.append(copy);
-      card.addEventListener('click', () => openDetail(catalog, item)); grid.append(card);
+      card.addEventListener('click', () => openDetail(catalog, item, reference)); grid.append(card);
     });
   }
 
-  async function openDetail(catalog, item) {
+  async function openDetail(catalog, item, reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: catalog, mediaId: item.id, extension: item.extension })) {
     const dialog = $('#detail-dialog'), content = $('#detail-content'); $('#detail-title').textContent = item.title; content.replaceChildren(node('div', 'loading-state', 'Chargement…')); dialog.showModal();
     try {
-      const detail = await rpc(`catalog.${catalog}.detail`, { providerKey: state.activeProviderKey, mediaId: item.id }, 'detail');
-      content.replaceChildren(); const layout = node('div', 'detail-layout'); layout.append(imageOrPlaceholder(detail.poster, detail.title, 'detail-poster'));
+      const detail = await rpc(`catalog.${catalog}.detail`, { providerKey: reference.providerKey, mediaId: reference.mediaId }, 'detail');
+      content.replaceChildren(); const layout = node('section', 'detail-layout'); layout.append(imageOrPlaceholder(detail.poster, detail.title, 'detail-poster'));
       const copy = node('div'); const metadata = node('div', 'metadata'); [detail.year, detail.genre, detail.duration, detail.rating ? `★ ${detail.rating}` : null].filter(Boolean).forEach(value => metadata.append(node('span', '', String(value))));
       copy.append(metadata, node('p', 'plot', detail.plot || 'Aucun résumé communiqué.'));
       if (detail.director) copy.append(node('p', 'muted', `Réalisation : ${detail.director}`)); if (detail.cast) copy.append(node('p', 'muted', `Distribution : ${detail.cast}`));
-      if (catalog === 'vod') copy.append(button('▶ Lire', 'primary', () => openPlayer({ providerKey: state.activeProviderKey, mediaType: 'vod', mediaId: detail.id, extension: detail.extension }, detail.title)));
-      else renderSeasons(copy, detail);
+      if (catalog === 'vod') copy.append(button('▶ Lire', 'primary', () => openPlayer({ ...reference, mediaId: detail.id, extension: detail.extension }, detail.title)));
       layout.append(copy); content.append(layout);
+      if (catalog === 'series') renderSeasons(content, detail, reference.providerKey);
     } catch (error) { if (!isAbort(error)) content.replaceChildren(node('p', 'form-error', error.message)); }
   }
-  function renderSeasons(parent, detail) {
+  function renderSeasons(parent, detail, providerKey) {
     if (!detail.seasons?.length) { parent.append(node('p', 'muted', 'Aucun épisode communiqué.')); return; }
-    detail.seasons.forEach(season => { const block = node('section', 'season'); block.append(node('h3', '', season.title)); season.episodes.forEach(episode => { const row = node('div', 'episode'); row.append(node('span', '', episode.title), button('Lire', 'play-small', () => openPlayer({ providerKey: state.activeProviderKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension }, episode.title))); block.append(row); }); parent.append(block); });
+    const section = node('section', 'series-seasons'); section.append(node('h3', '', 'Saisons et épisodes'));
+    detail.seasons.forEach((season, index) => {
+      const block = node('details', 'season'); block.open = detail.seasons.length === 1 || index === 0;
+      block.append(node('summary', '', `${season.title} · ${season.episodes.length} épisode(s)`));
+      const list = node('div', 'episode-list');
+      season.episodes.forEach(episode => {
+        const row = node('div', 'episode'); const number = episode.episode ? `E${String(episode.episode).padStart(2, '0')} — ` : '';
+        row.append(node('span', '', `${number}${episode.title}`), button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension }, episode.title))); list.append(row);
+      });
+      block.append(list); section.append(block);
+    });
+    parent.append(section);
   }
   async function openPlayer(reference, title) {
     $('#player-title').textContent = title; $('#player-dialog').showModal();
@@ -189,7 +201,8 @@
   }
   function renderSearchGroup(parent, title, catalog, result) {
     const group = node('section', 'result-group'); const heading = node('h3'); heading.append(node('span', '', title), node('span', '', `${result.total} résultat(s)`)); const grid = node('div', 'catalog-grid'); group.append(heading, grid); parent.append(group);
-    result.items.forEach(hit => { const item = { id: hit.remoteId, title: hit.title, imageUrl: hit.imageUrl }; const card = node('article', 'media-card'); card.append(imageOrPlaceholder(item.imageUrl, item.title)); const copy = node('div', 'media-copy'); copy.append(node('strong', '', item.title)); card.append(copy); card.addEventListener('click', () => openDetail(catalog, item)); grid.append(card); });
+    const providerKey = state.activeProviderKey;
+    result.items.forEach(hit => { const item = { id: hit.remoteId, title: hit.title, imageUrl: hit.imageUrl }; const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id }); const card = node('article', 'media-card'); card.append(imageOrPlaceholder(item.imageUrl, item.title)); const copy = node('div', 'media-copy'); copy.append(node('strong', '', item.title)); card.append(copy); card.addEventListener('click', () => openDetail(catalog, item, reference)); grid.append(card); });
     if (result.totalPages > 1) {
       const pager = node('div', 'pager'); const previous = button('Précédent', 'secondary', () => changeSearchPage(catalog, result.page - 1)); const next = button('Suivant', 'secondary', () => changeSearchPage(catalog, result.page + 1)); previous.disabled = result.page <= 1; next.disabled = result.page >= result.totalPages; pager.append(previous, node('span', 'page-info', `Page ${result.page} / ${result.totalPages}`), next); group.append(pager);
     }

@@ -24,6 +24,23 @@ public sealed class ProviderFactoryTests
         Assert.IsType<StalkerProviderClient>(client);
     }
 
+    [Fact]
+    public async Task ProviderFactoryReusesStalkerSessionAndCatalogCachePerConfiguration()
+    {
+        var secrets = new InMemorySecretStore();
+        var reference = await secrets.PutAsync(new(MacAddress: "00:00:00:00:00:00"));
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(), secrets);
+        var provider = new ProviderRecord("fixture-provider", ProviderType.Stalker, "Fixture", new Uri("https://example.invalid"), reference);
+
+        var first = await factory.CreateAsync(provider);
+        var second = await factory.CreateAsync(provider);
+        var replacementReference = await secrets.PutAsync(new(MacAddress: "00:00:00:00:00:01"));
+        var replacement = await factory.CreateAsync(provider with { SecretReference = replacementReference });
+
+        Assert.Same(first, second);
+        Assert.NotSame(first, replacement);
+    }
+
     [Theory]
     [InlineData("valid-key", true)]
     [InlineData("a", true)]
