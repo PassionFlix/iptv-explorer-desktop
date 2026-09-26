@@ -24,10 +24,28 @@ internal static class JsonSupport
         root = root.Unwrap();
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data)) root = data;
         if (root.ValueKind != JsonValueKind.Array) return [];
-        var result = new List<ProviderCategory>();
-        foreach (var item in root.EnumerateArray())
+        return ReadCategories(root.EnumerateArray());
+    }
+
+    public static bool TryStalkerCategories(JsonElement root, out IReadOnlyList<ProviderCategory> categories, out string structure)
+    {
+        structure = DescribeStalkerPayload(root);
+        if (!TryStalkerRecords(root, out var records))
         {
-            var id = item.Text("category_id", "id");
+            categories = [];
+            return false;
+        }
+
+        categories = ReadCategories(records);
+        return records.Count == 0 || categories.Count > 0;
+    }
+
+    private static IReadOnlyList<ProviderCategory> ReadCategories(IEnumerable<JsonElement> items)
+    {
+        var result = new List<ProviderCategory>();
+        foreach (var item in items)
+        {
+            var id = item.Text("category_id", "id", "genre_id");
             var name = item.Text("category_name", "name", "title");
             if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
             {
@@ -38,6 +56,81 @@ internal static class JsonSupport
         }
         return result;
     }
+
+    private static bool TryStalkerRecords(JsonElement root, out IReadOnlyList<JsonElement> records)
+    {
+        var payload = root;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("js", out var js)) payload = js;
+        if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("data", out var data)) payload = data;
+
+        if (payload.ValueKind == JsonValueKind.Array)
+        {
+            var values = payload.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.Object).Select(item => item.Clone()).ToArray();
+            records = values;
+            return payload.GetArrayLength() == 0 || values.Length > 0;
+        }
+
+        if (payload.ValueKind == JsonValueKind.Object)
+        {
+            var properties = payload.EnumerateObject().ToArray();
+            var values = properties.Where(property => property.Value.ValueKind == JsonValueKind.Object).Select(property => property.Value.Clone()).ToArray();
+            records = values;
+            return properties.Length == 0 || values.Length > 0;
+        }
+
+        records = [];
+        return false;
+    }
+
+    private static string DescribeStalkerPayload(JsonElement root)
+    {
+        var details = new List<string> { $"root={Kind(root)}" };
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            details.Add($"root_fields={Names(root.EnumerateObject().Select(property => property.Name))}");
+            if (root.TryGetProperty("js", out var js))
+            {
+                details.Add($"js={Kind(js)}");
+                DescribeCollection(js, "js", details);
+            }
+            else
+            {
+                DescribeCollection(root, "root", details);
+            }
+        }
+        else
+        {
+            DescribeCollection(root, "root", details);
+        }
+        return string.Join(", ", details);
+    }
+
+    private static void DescribeCollection(JsonElement value, string label, List<string> details)
+    {
+        if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("data", out var data))
+        {
+            details.Add($"{label}_data={Kind(data)}");
+            value = data;
+            label += "_data";
+        }
+
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            details.Add($"count={value.GetArrayLength()}");
+            var first = value.EnumerateArray().FirstOrDefault(item => item.ValueKind == JsonValueKind.Object);
+            if (first.ValueKind == JsonValueKind.Object) details.Add($"fields={Names(first.EnumerateObject().Select(property => property.Name))}");
+        }
+        else if (value.ValueKind == JsonValueKind.Object)
+        {
+            var properties = value.EnumerateObject().ToArray();
+            details.Add($"{label}_fields={Names(properties.Select(property => property.Name))}");
+            var first = properties.Select(property => property.Value).FirstOrDefault(item => item.ValueKind == JsonValueKind.Object);
+            if (first.ValueKind == JsonValueKind.Object) details.Add($"fields={Names(first.EnumerateObject().Select(property => property.Name))}");
+        }
+    }
+
+    private static string Kind(JsonElement element) => element.ValueKind.ToString().ToLowerInvariant();
+    private static string Names(IEnumerable<string> names) => string.Join('|', names.Take(12).Select(name => new string(name.Where(character => char.IsLetterOrDigit(character) || character is '_' or '-').Take(40).ToArray())).Where(name => name.Length > 0));
 
     public static CatalogItem Item(JsonElement item, CatalogType catalog)
     {

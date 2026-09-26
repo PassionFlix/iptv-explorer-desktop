@@ -89,6 +89,88 @@ public sealed class ProviderFixtureTests
         Assert.Equal(2, handler.Handshakes);
     }
 
+    [Theory]
+    [InlineData("application/json")]
+    [InlineData("text/javascript")]
+    [InlineData("text/plain")]
+    [InlineData("application/javascript")]
+    public async Task StalkerCategoriesAcceptValidJsonRegardlessOfContentType(string mediaType)
+    {
+        using var http = new HttpClient(new StalkerCategoriesHandler("{\"js\":[{\"id\":\"10\",\"title\":\"Fixture category\"}]}", mediaType));
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var category = Assert.Single(await client.GetLiveCategoriesAsync());
+
+        Assert.Equal("10", category.RemoteId);
+    }
+
+    [Theory]
+    [InlineData("{\"js\":[{\"id\":\"10\",\"title\":\"Wrapped\"}]}")]
+    [InlineData("[{\"id\":\"10\",\"title\":\"Direct\"}]")]
+    [InlineData("{\"js\":{\"data\":[{\"id\":\"10\",\"title\":\"Nested data\"}]}}")]
+    [InlineData("{\"js\":{\"10\":{\"id\":\"10\",\"title\":\"Indexed object\"}}}")]
+    public async Task StalkerCategoriesAcceptWebCompatiblePayloadShapes(string payload)
+    {
+        using var http = new HttpClient(new StalkerCategoriesHandler(payload, "text/javascript"));
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        Assert.Single(await client.GetLiveCategoriesAsync());
+    }
+
+    [Fact]
+    public async Task StalkerJsonDepthMatchesWebDecoderLimit()
+    {
+        var nestedMetadata = Enumerable.Range(1, 80).Aggregate("\"leaf\"", (value, _) => $"{{\"nested\":{value}}}");
+        var payload = $"{{\"js\":[{{\"id\":\"10\",\"title\":\"Deep fixture\",\"metadata\":{nestedMetadata}}}]}}";
+        using var http = new HttpClient(new StalkerCategoriesHandler(payload, "text/javascript"));
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        Assert.Single(await client.GetLiveCategoriesAsync());
+    }
+
+    [Theory]
+    [InlineData("{\"unexpected\":\"value\"}")]
+    [InlineData("{\"js\":\"wrong type\"}")]
+    [InlineData("{\"js\":[1,true,null]}")]
+    public async Task StalkerCategoriesRejectUnsupportedPayloadStructures(string payload)
+    {
+        using var http = new HttpClient(new StalkerCategoriesHandler(payload, "text/javascript"));
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var exception = await Assert.ThrowsAnyAsync<Exception>(() => client.GetLiveCategoriesAsync());
+
+        Assert.StartsWith("get_genres returned an unsupported Stalker payload structure.", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(payload, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StalkerCategoriesRejectMalformedJavascriptBodyAsJsonIncompatible()
+    {
+        using var http = new HttpClient(new StalkerCategoriesHandler("not-json", "text/javascript"));
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        var exception = await Assert.ThrowsAnyAsync<Exception>(() => client.GetLiveCategoriesAsync());
+
+        Assert.Contains("get_genres HTTP 200 (text/javascript), JSON incompatible", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("not-json", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StalkerUsesWebActionsForAllCategoryFamilies()
+    {
+        var handler = new StalkerCategoriesHandler("{\"js\":[{\"id\":\"10\",\"title\":\"Fixture category\"}]}", "application/json");
+        using var http = new HttpClient(handler);
+        var client = new StalkerProviderClient(StalkerProvider, StalkerSecret, http);
+
+        Assert.Single(await client.GetLiveCategoriesAsync());
+        Assert.Single(await client.GetVodCategoriesAsync());
+        Assert.Single(await client.GetSeriesCategoriesAsync());
+
+        Assert.Contains(("itv", "get_genres"), handler.CategoryRequests);
+        Assert.Contains(("vod", "get_categories"), handler.CategoryRequests);
+        Assert.Contains(("series", "get_categories"), handler.CategoryRequests);
+    }
+
     [Fact]
     public async Task StalkerHandshakeFollowsSameServerRedirectAndKeepsRequiredHeaders()
     {
@@ -160,6 +242,9 @@ public sealed class ProviderFixtureTests
         Assert.Equal(expectedHandshakeAttempts, handler.HandshakePaths.Count);
         Assert.True(handler.SawCompatibleHandshake);
         Assert.True(handler.SawCookieAndBearerAfterHandshake);
+        Assert.Contains("itv/get_genres: root=object", tested.Diagnostic?.ProtocolDetails, StringComparison.Ordinal);
+        Assert.Contains("vod/get_categories: root=object", tested.Diagnostic?.ProtocolDetails, StringComparison.Ordinal);
+        Assert.Contains("series/get_categories: root=object", tested.Diagnostic?.ProtocolDetails, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -299,6 +384,24 @@ public sealed class ProviderFixtureTests
         }
     }
 
+    private sealed class StalkerCategoriesHandler(string payload, string mediaType) : HttpMessageHandler
+    {
+        public List<(string Type, string Action)> CategoryRequests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var action = Parameter(request.RequestUri, "action");
+            if (action == "handshake") return Task.FromResult(Json("{\"js\":{\"token\":\"fixture-token\"}}"));
+            if (action == "get_profile") return Task.FromResult(Json("{\"js\":{\"id\":\"profile-1\",\"auth\":\"1\"}}"));
+            if (action is "get_genres" or "get_categories")
+            {
+                CategoryRequests.Add((Parameter(request.RequestUri, "type") ?? string.Empty, action));
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(payload, Encoding.UTF8, mediaType) });
+            }
+            return Task.FromResult(Json("{\"js\":{}}"));
+        }
+    }
+
     private sealed class StrictStalkerOnboardingHandler(string acceptedPath, bool redirectHandshake = false, string expectedMac = "00:00:00:00:00:00", string? incompatibleProfilePath = null) : HttpMessageHandler
     {
         public List<string> HandshakePaths { get; } = [];
@@ -341,7 +444,7 @@ public sealed class ProviderFixtureTests
             var json = action switch
             {
                 "get_profile" => "{\"js\":{\"id\":\"profile-1\",\"auth\":\"1\",\"status\":\"Active\"}}",
-                "get_genres" => "{\"js\":[{\"id\":\"10\",\"title\":\"Fixture category\"}]}",
+                "get_genres" or "get_categories" => "{\"js\":[{\"id\":\"10\",\"title\":\"Fixture category\"}]}",
                 _ => "{\"js\":{}}"
             };
             return Task.FromResult(Json(json));

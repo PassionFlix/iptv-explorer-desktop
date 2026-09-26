@@ -8,9 +8,18 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 {
     private readonly SemaphoreSlim _handshake = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(CatalogType Catalog, string Id), string> _commands = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _categoryStructures = new(StringComparer.Ordinal);
     private string? _token; // Session-only by design. Never expose or persist this value.
 
     public ProviderType Type => ProviderType.Stalker;
+    internal string? CategoryDiagnostic
+    {
+        get
+        {
+            var values = new[] { "itv", "vod", "series" }.Where(_categoryStructures.ContainsKey).Select(type => _categoryStructures[type]).ToArray();
+            return values.Length == 0 ? null : string.Join(" ; ", values);
+        }
+    }
 
     public async Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken = default)
     {
@@ -116,8 +125,12 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 
     private async Task<IReadOnlyList<ProviderCategory>> GetCategories(string type, CancellationToken cancellationToken)
     {
-        using var document = await PortalAsync(type, "get_genres", [], cancellationToken);
-        return JsonSupport.Categories(document.RootElement);
+        var action = type == "itv" ? "get_genres" : "get_categories";
+        using var document = await PortalAsync(type, action, [], cancellationToken);
+        if (!JsonSupport.TryStalkerCategories(document.RootElement, out var categories, out var structure))
+            throw new StalkerPayloadStructureException(action, structure);
+        _categoryStructures[type] = $"{type}/{action}: {structure}";
+        return categories;
     }
 
     private async Task<CatalogPage<CatalogItem>> OrderedList(string type, CatalogType catalog, string categoryId, int page, CancellationToken cancellationToken)
@@ -221,7 +234,7 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         }
         if (!response.IsSuccessStatusCode) throw StalkerResponseException.For(action, response);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        try { return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken); }
+        try { return await JsonDocument.ParseAsync(stream, new JsonDocumentOptions { MaxDepth = 512 }, cancellationToken); }
         catch (JsonException exception) { throw StalkerResponseException.For(action, response, "JSON incompatible", exception); }
     }
 
@@ -290,3 +303,6 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         }
     }
 }
+
+internal sealed class StalkerPayloadStructureException(string action, string structure)
+    : Exception($"{action} returned an unsupported Stalker payload structure. Structure: {structure}");

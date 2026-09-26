@@ -6,7 +6,7 @@ using IPTVExplorer.Core;
 namespace IPTVExplorer.Providers;
 
 public sealed record ProviderDraftInput(string Name, string ProviderType, string ServerUrl, string? Username, string? Password, string? MacAddress);
-public sealed record OnboardingDiagnosticView(string Type, bool Authenticated, string Account, int Live, int Vod, int Series, long LatencyMs);
+public sealed record OnboardingDiagnosticView(string Type, bool Authenticated, string Account, int Live, int Vod, int Series, long LatencyMs, string? ProtocolDetails = null);
 public sealed record ProviderDraftView(string Id, string Name, string RequestedType, string ServerUrl, ProviderType? DetectedType, string CredentialStatus, string? Message, OnboardingDiagnosticView? Diagnostic, IReadOnlyDictionary<string, IReadOnlyList<ProviderCategory>> Categories);
 public sealed record CategoryPolicyInput(string Mode, IReadOnlyList<string> SelectedIds);
 public sealed record ProviderSaveOptions(bool Enable, IReadOnlyDictionary<string, CategoryPolicyInput>? Policies = null);
@@ -78,12 +78,14 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
                     [CatalogType.Vod] = vod,
                     [CatalogType.Series] = series
                 };
-                var diagnostic = new OnboardingDiagnosticView(attempt.Type == ProviderType.Xtream ? "Xtream" : "Stalker / MAG", account.Authenticated, account.Status ?? "Active", live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds);
+                var protocolDetails = client is StalkerProviderClient stalker ? stalker.CategoryDiagnostic : null;
+                var diagnostic = new OnboardingDiagnosticView(attempt.Type == ProviderType.Xtream ? "Xtream" : "Stalker / MAG", account.Authenticated, account.Status ?? "Active", live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds, protocolDetails);
                 draft = draft with { DetectedType = attempt.Type, PortalPath = attempt.Portal, Message = "Connection successful.", Diagnostic = diagnostic, Categories = categories };
                 _drafts[draft.Id] = draft;
                 return View(draft);
             }
             catch (OperationCanceledException) { throw; }
+            catch (StalkerPayloadStructureException exception) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → {exception.Message}"); }
             catch (HttpRequestException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → connexion HTTP interrompue après le profil"); }
             catch (System.Text.Json.JsonException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → JSON incompatible après le profil"); }
             catch (InvalidDataException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → réponse incompatible après le profil"); }
