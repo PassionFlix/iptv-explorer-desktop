@@ -56,6 +56,7 @@ internal interface ILibMpvApi : IDisposable
     int SetOptionString(nint handle, string name, string value);
     int Initialize(nint handle);
     int Command(nint handle, params string[] arguments);
+    int LoadFile(nint handle, string uri, string? httpHeaderFields);
     int SetPropertyString(nint handle, string name, string value);
     int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format);
     MpvEventValue WaitEvent(nint handle, double timeoutSeconds);
@@ -85,6 +86,7 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
     private readonly MpvSetOptionString _setOptionString;
     private readonly MpvInitialize _initialize;
     private readonly MpvCommand _command;
+    private readonly MpvCommandNode _commandNode;
     private readonly MpvSetPropertyString _setPropertyString;
     private readonly MpvObserveProperty _observeProperty;
     private readonly MpvWaitEvent _waitEvent;
@@ -104,6 +106,7 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
             _setOptionString = Export<MpvSetOptionString>("mpv_set_option_string");
             _initialize = Export<MpvInitialize>("mpv_initialize");
             _command = Export<MpvCommand>("mpv_command");
+            _commandNode = Export<MpvCommandNode>("mpv_command_node");
             _setPropertyString = Export<MpvSetPropertyString>("mpv_set_property_string");
             _observeProperty = Export<MpvObserveProperty>("mpv_observe_property");
             _waitEvent = Export<MpvWaitEvent>("mpv_wait_event");
@@ -137,6 +140,58 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
         {
             if (array != 0) Marshal.FreeHGlobal(array);
             foreach (var value in strings) if (value != 0) Marshal.FreeCoTaskMem(value);
+        }
+    }
+
+    public int LoadFile(nint handle, string uri, string? httpHeaderFields)
+    {
+        const int commandArgumentCount = 5;
+        var strings = new List<nint>(6);
+        var buffers = new List<nint>(5);
+        try
+        {
+            NativeMpvNode StringNode(string value)
+            {
+                var pointer = Marshal.StringToCoTaskMemUTF8(value);
+                strings.Add(pointer);
+                return new NativeMpvNode { String = pointer, Format = MpvFormat.String };
+            }
+
+            nint optionValues = 0;
+            nint optionKeys = 0;
+            var optionCount = 0;
+            if (!string.IsNullOrEmpty(httpHeaderFields))
+            {
+                optionCount = 1;
+                optionValues = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMpvNode>());
+                buffers.Add(optionValues);
+                Marshal.StructureToPtr(StringNode(httpHeaderFields), optionValues, false);
+                optionKeys = Marshal.AllocHGlobal(IntPtr.Size);
+                buffers.Add(optionKeys);
+                Marshal.WriteIntPtr(optionKeys, StringNode("http-header-fields").String);
+            }
+
+            var optionListPointer = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMpvNodeList>());
+            buffers.Add(optionListPointer);
+            Marshal.StructureToPtr(new NativeMpvNodeList { Count = optionCount, Values = optionValues, Keys = optionKeys }, optionListPointer, false);
+            var optionMap = new NativeMpvNode { List = optionListPointer, Format = MpvFormat.NodeMap };
+
+            var commandValues = Marshal.AllocHGlobal(commandArgumentCount * Marshal.SizeOf<NativeMpvNode>());
+            buffers.Add(commandValues);
+            var arguments = new[] { StringNode("loadfile"), StringNode(uri), StringNode("replace"), StringNode("-1"), optionMap };
+            for (var index = 0; index < arguments.Length; index++)
+                Marshal.StructureToPtr(arguments[index], commandValues + index * Marshal.SizeOf<NativeMpvNode>(), false);
+
+            var commandListPointer = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMpvNodeList>());
+            buffers.Add(commandListPointer);
+            Marshal.StructureToPtr(new NativeMpvNodeList { Count = commandArgumentCount, Values = commandValues, Keys = 0 }, commandListPointer, false);
+            var command = new NativeMpvNode { List = commandListPointer, Format = MpvFormat.NodeArray };
+            return _commandNode(handle, ref command, 0);
+        }
+        finally
+        {
+            for (var index = buffers.Count - 1; index >= 0; index--) Marshal.FreeHGlobal(buffers[index]);
+            for (var index = strings.Count - 1; index >= 0; index--) Marshal.FreeCoTaskMem(strings[index]);
         }
     }
 
@@ -295,6 +350,7 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int MpvSetOptionString(nint handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int MpvInitialize(nint handle);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int MpvCommand(nint handle, nint arguments);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int MpvCommandNode(nint handle, ref NativeMpvNode arguments, nint result);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int MpvSetPropertyString(nint handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int MpvObserveProperty(nint handle, ulong userData, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, MpvFormat format);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate nint MpvWaitEvent(nint handle, double timeoutSeconds);
@@ -328,21 +384,21 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 16)]
-    private readonly struct NativeMpvNode
+    private struct NativeMpvNode
     {
-        [FieldOffset(0)] public readonly nint String;
-        [FieldOffset(0)] public readonly long Int64;
-        [FieldOffset(0)] public readonly double Double;
-        [FieldOffset(0)] public readonly int Flag;
-        [FieldOffset(0)] public readonly nint List;
-        [FieldOffset(8)] public readonly MpvFormat Format;
+        [FieldOffset(0)] public nint String;
+        [FieldOffset(0)] public long Int64;
+        [FieldOffset(0)] public double Double;
+        [FieldOffset(0)] public int Flag;
+        [FieldOffset(0)] public nint List;
+        [FieldOffset(8)] public MpvFormat Format;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private readonly struct NativeMpvNodeList
+    private struct NativeMpvNodeList
     {
-        public readonly int Count;
-        public readonly nint Values;
-        public readonly nint Keys;
+        public int Count;
+        public nint Values;
+        public nint Keys;
     }
 }

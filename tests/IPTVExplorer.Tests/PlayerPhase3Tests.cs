@@ -103,19 +103,38 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
-    public async Task FileLocalHeadersAreClearedBeforeMediaWithoutHeaders()
+    public async Task FirstLoadWithoutHeadersUsesStructuredLoadFileWithoutPropertyWrite()
     {
         var api = new RecordingMpvApi();
         await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
-        var sensitiveHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer private-token" };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/first")), (nint)653);
+
+        var load = Assert.Single(api.Loads);
+        Assert.Null(load.HttpHeaderFields);
+        Assert.DoesNotContain(api.Properties, value => value.Name == "file-local-options/http-header-fields");
+        Assert.DoesNotContain(api.Options, value => value.Name == "http-header-fields");
+    }
+
+    [Fact]
+    public async Task StructuredLoadFileKeepsHeadersLocalToTheirMedia()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+        var sensitiveHeaders = new Dictionary<string, string>
+        {
+            ["Authorization"] = "Bearer private-token",
+            ["X-Fixture"] = "comma,value\\tail"
+        };
 
         await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/first"), sensitiveHeaders), (nint)654);
         await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/second")), (nint)654);
 
-        var values = api.Properties.Where(value => value.Name == "file-local-options/http-header-fields").Select(value => value.Value).ToArray();
-        Assert.Equal(2, values.Length);
-        Assert.Equal("Authorization: Bearer private-token", values[0]);
-        Assert.Equal(string.Empty, values[1]);
+        var loads = api.Loads.ToArray();
+        Assert.Equal(2, loads.Length);
+        Assert.Equal("Authorization: Bearer private-token,X-Fixture: comma\\,value\\\\tail", loads[0].HttpHeaderFields);
+        Assert.Null(loads[1].HttpHeaderFields);
+        Assert.DoesNotContain(api.Properties, value => value.Name == "file-local-options/http-header-fields");
         Assert.DoesNotContain(api.Options, value => value.Name == "http-header-fields");
     }
 
@@ -197,6 +216,7 @@ public sealed class PlayerPhase3Tests
         public ConcurrentQueue<(string Name, string Value)> Options { get; } = [];
         public ConcurrentQueue<(string Name, string Value)> Properties { get; } = [];
         public ConcurrentQueue<string> ObservedProperties { get; } = [];
+        public ConcurrentQueue<LoadFileCall> Loads { get; } = [];
         public int CreateCalls { get; private set; }
         public bool Terminated { get; private set; }
         public bool Disposed { get; private set; }
@@ -204,6 +224,7 @@ public sealed class PlayerPhase3Tests
         public int SetOptionString(nint handle, string name, string value) { Options.Enqueue((name, value)); return 0; }
         public int Initialize(nint handle) => 0;
         public int Command(nint handle, params string[] arguments) => 0;
+        public int LoadFile(nint handle, string uri, string? httpHeaderFields) { Loads.Enqueue(new(uri, httpHeaderFields)); return 0; }
         public int SetPropertyString(nint handle, string name, string value) { Properties.Enqueue((name, value)); return 0; }
         public int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format) { ObservedProperties.Enqueue(name); return 0; }
         public MpvEventValue WaitEvent(nint handle, double timeoutSeconds)
@@ -218,4 +239,6 @@ public sealed class PlayerPhase3Tests
         public void TerminateDestroy(nint handle) => Terminated = true;
         public void Dispose() { Disposed = true; _wakeup.Dispose(); }
     }
+
+    private sealed record LoadFileCall(string Uri, string? HttpHeaderFields);
 }

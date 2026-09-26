@@ -44,9 +44,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
 
             var (api, handle) = RequiredEngine();
             var headers = FormatHeaders(media.Headers);
-            if (api.SetPropertyString(handle, "file-local-options/http-header-fields", headers) < 0)
-                throw new InvalidOperationException("Impossible de configurer les en-têtes HTTP du lecteur.");
-            if (api.Command(handle, "loadfile", media.Uri.AbsoluteUri, "replace") < 0)
+            if (api.LoadFile(handle, media.Uri.AbsoluteUri, headers) < 0)
                 throw new InvalidOperationException("Impossible de charger le média dans libmpv.");
         }
         catch (LibMpvNotInstalledException)
@@ -257,9 +255,9 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         }
     }
 
-    private static string FormatHeaders(IReadOnlyDictionary<string, string>? headers)
+    private static string? FormatHeaders(IReadOnlyDictionary<string, string>? headers)
     {
-        if (headers is null || headers.Count == 0) return string.Empty;
+        if (headers is null || headers.Count == 0) return null;
         var values = new List<string>(headers.Count);
         foreach (var (name, value) in headers)
         {
