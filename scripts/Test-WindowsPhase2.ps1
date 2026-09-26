@@ -20,7 +20,7 @@ function Invoke-CheckedCommand {
     & $FilePath @ArgumentList
     $nativeExitCode = $LASTEXITCODE
     if ($nativeExitCode -ne 0) {
-        [Console]::Error.WriteLine("Step '{0}' failed with exit code {1}." -f $Step, $nativeExitCode)
+        [Console]::Error.WriteLine("Step '$Step' failed with exit code $nativeExitCode.")
         exit $nativeExitCode
     }
 }

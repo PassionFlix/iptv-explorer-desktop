@@ -1,5 +1,6 @@
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
+using Microsoft.Data.Sqlite;
 
 namespace IPTVExplorer.Tests;
 
@@ -31,10 +32,7 @@ internal sealed class TestDatabase : IAsyncDisposable
     {
         // Disposed pooled connections can retain the SQLite file handle on Windows.
         // Clear only this test database pool before inspecting its raw persisted bytes.
-        using (var poolKey = Connections.Create())
-        {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(poolKey);
-        }
+        ClearMainDatabasePool();
 
         var storage = new List<string>();
         foreach (var path in new[] { Paths.Database, Paths.Database + "-wal", Paths.Database + "-shm", Paths.Database + "-journal" })
@@ -47,10 +45,27 @@ internal sealed class TestDatabase : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        using var poolKey = Connections.Create();
-        Microsoft.Data.Sqlite.SqliteConnection.ClearPool(poolKey);
+        ClearMainDatabasePool();
+        ClearIndexPools();
         if (Directory.Exists(Root)) Directory.Delete(Root, true);
         return ValueTask.CompletedTask;
+    }
+
+    private void ClearMainDatabasePool()
+    {
+        using var poolKey = Connections.Create();
+        SqliteConnection.ClearPool(poolKey);
+    }
+
+    private void ClearIndexPools()
+    {
+        if (!Directory.Exists(Paths.Indexes)) return;
+        foreach (var path in Directory.EnumerateFiles(Paths.Indexes, "*.sqlite", SearchOption.TopDirectoryOnly))
+        {
+            var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = true };
+            using var poolKey = new SqliteConnection(builder.ConnectionString);
+            SqliteConnection.ClearPool(poolKey);
+        }
     }
 }
 

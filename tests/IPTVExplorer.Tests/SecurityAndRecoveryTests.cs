@@ -27,8 +27,9 @@ public sealed class SecurityAndRecoveryTests
         var provider = await database.AddProviderAsync(ProviderType.Stalker);
         var client = new StalkerProviderClient(provider, new ProviderSecret(MacAddress: "00:00:00:00:00:00"), new HttpClient(new StalkerFixtureHandler()));
         Assert.True((await client.TestConnectionAsync()).Success);
-        var printable = System.Text.Encoding.UTF8.GetString(await File.ReadAllBytesAsync(database.Paths.Database));
-        Assert.DoesNotContain("session-token-demo", printable, StringComparison.Ordinal);
+        var storage = await database.ReadRawSqliteStorageAsync();
+        Assert.NotEmpty(storage);
+        foreach (var printable in storage) Assert.DoesNotContain("session-token-demo", printable, StringComparison.Ordinal);
     }
 
     [Fact]
