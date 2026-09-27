@@ -31,9 +31,10 @@ try {
         if ($tracked -notcontains $path) { throw "Fichier public-release manquant : $path" }
     }
 
-    $legacyVersionHits = git grep -n --fixed-strings '0.2.0-dev' -- ':!docs/phase-*' 2>$null
+    $legacyVersion = '0.2.0' + '-dev'
+    $legacyVersionHits = git grep -n --fixed-strings $legacyVersion -- ':!docs/phase-*' 2>$null
     if ($LASTEXITCODE -eq 0 -and $legacyVersionHits) {
-        throw "Référence 0.2.0-dev encore présente :`n$legacyVersionHits"
+        throw "Référence $legacyVersion encore présente :`n$legacyVersionHits"
     }
 
     [xml]$props = Get-Content -LiteralPath 'Directory.Build.props' -Raw
