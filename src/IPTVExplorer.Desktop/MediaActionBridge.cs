@@ -6,11 +6,16 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using IPTVExplorer.Core;
+using IPTVExplorer.Infrastructure;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 
 namespace IPTVExplorer.Desktop;
 
-public sealed class MediaActionBridge(IProviderRepository providers, IProviderClientFactory clients)
+public sealed class MediaActionBridge(
+    IProviderRepository providers,
+    IProviderClientFactory clients,
+    ILogger<MediaActionBridge> logger)
 {
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
     private readonly ConcurrentDictionary<string, DownloadOperation> _downloads = new(StringComparer.Ordinal);
@@ -47,8 +52,9 @@ public sealed class MediaActionBridge(IProviderRepository providers, IProviderCl
         {
             return BridgeProtocol.Serialize(new BridgeResponse(request.Id, false, Error: "Opération annulée."));
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            logger.LogWarning("Media action {Method} failed: {SafeError}", request.Method, LogRedactor.Redact(exception.Message));
             var error = request.Method.StartsWith("media.download", StringComparison.Ordinal)
                 ? "Impossible de télécharger ce média."
                 : "Impossible de copier le lien de ce média.";
@@ -153,24 +159,28 @@ public sealed class MediaActionBridge(IProviderRepository providers, IProviderCl
                 operation.Status = "running";
             }
 
-            await using var source = await response.Content.ReadAsStreamAsync(operation.Cancellation.Token);
-            await using var target = new FileStream(
+            // Keep the source and destination streams in their own scope so both are fully
+            // closed before the temporary file is renamed to the requested destination.
+            // On Windows, moving a FileShare.None file while its stream is still open fails.
+            await using (var source = await response.Content.ReadAsStreamAsync(operation.Cancellation.Token))
+            await using (var target = new FileStream(
                 operation.TemporaryPath,
                 FileMode.Create,
                 FileAccess.Write,
                 FileShare.None,
                 1024 * 128,
-                useAsync: true);
-
-            var buffer = new byte[1024 * 128];
-            while (true)
+                useAsync: true))
             {
-                var read = await source.ReadAsync(buffer, operation.Cancellation.Token);
-                if (read == 0) break;
-                await target.WriteAsync(buffer.AsMemory(0, read), operation.Cancellation.Token);
-                lock (operation.Gate) operation.BytesReceived += read;
+                var buffer = new byte[1024 * 128];
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer, operation.Cancellation.Token);
+                    if (read == 0) break;
+                    await target.WriteAsync(buffer.AsMemory(0, read), operation.Cancellation.Token);
+                    lock (operation.Gate) operation.BytesReceived += read;
+                }
+                await target.FlushAsync(operation.Cancellation.Token);
             }
-            await target.FlushAsync(operation.Cancellation.Token);
 
             File.Move(operation.TemporaryPath, operation.DestinationPath, true);
             lock (operation.Gate)
@@ -183,8 +193,9 @@ public sealed class MediaActionBridge(IProviderRepository providers, IProviderCl
         {
             lock (operation.Gate) operation.Status = "cancelled";
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            logger.LogWarning("VOD download failed: {SafeError}", LogRedactor.Redact(exception.Message));
             lock (operation.Gate)
             {
                 operation.Status = "failed";
