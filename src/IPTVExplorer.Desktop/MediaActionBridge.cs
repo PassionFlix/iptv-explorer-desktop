@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Windows;
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
+using IPTVExplorer.Providers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 
@@ -146,6 +147,15 @@ public sealed class MediaActionBridge(
                 foreach (var (name, value) in media.Headers)
                     request.Headers.TryAddWithoutValidation(name, value);
             }
+
+            // Some Xtream-compatible media endpoints reject HttpClient's empty/default identity
+            // even though the exact same media URL works in a browser or libmpv. Keep provider-
+            // supplied headers authoritative, otherwise send a conservative browser-compatible
+            // user-agent for the binary media transfer.
+            if (!request.Headers.Contains("User-Agent"))
+                request.Headers.TryAddWithoutValidation("User-Agent", ProviderHttpRegistration.MediaUserAgent);
+            if (!request.Headers.Contains("Accept"))
+                request.Headers.TryAddWithoutValidation("Accept", "*/*");
 
             using var response = await http.SendAsync(
                 request,
