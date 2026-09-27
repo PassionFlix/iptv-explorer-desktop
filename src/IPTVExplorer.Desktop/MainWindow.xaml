@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="IPTV Explorer" Icon="Assets/IPTVExplorer.ico"
-        Width="1440" Height="900" MinWidth="1040" MinHeight="680"
+        Width="1280" Height="760" MinWidth="960" MinHeight="600"
         WindowStartupLocation="CenterScreen" Background="#070D18"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
   <Grid Background="#070D18">
