@@ -21,6 +21,7 @@
   <ItemGroup>
     <Resource Include="Assets\IPTVExplorer.ico" />
     <Content Include="ui\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="native\mpv\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="native\mpv\libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\libmpv-2.dll')" />
+    <Content Include="native\mpv\README.txt" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\README.txt')" />
   </ItemGroup>
 </Project>
