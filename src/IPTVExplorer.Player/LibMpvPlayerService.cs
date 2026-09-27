@@ -7,6 +7,8 @@ public sealed class LibMpvNotInstalledException() : InvalidOperationException("L
 
 public sealed class LibMpvPlayerService : IPlayerService, IDisposable
 {
+    private static readonly TimeSpan TrackChangeResumeWindow = TimeSpan.FromSeconds(15);
+
     private readonly ILibMpvApiFactory _apiFactory;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly object _sync = new();
@@ -18,6 +20,10 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     private IReadOnlyList<MediaTrack> _tracks = [];
     private TimeSpan _position;
     private TimeSpan? _duration;
+    private bool _userPaused;
+    private bool _playbackActive;
+    private bool _pausedForCache;
+    private DateTime _trackChangeResumeUntilUtc = DateTime.MinValue;
     private int _disposed;
 
     public LibMpvPlayerService() : this(new LibMpvApiFactory(new LibMpvLibraryLocator())) { }
@@ -34,6 +40,14 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (renderHostHandle == 0) throw new ArgumentException("A native video surface is required.", nameof(renderHostHandle));
         if (IntPtr.Size != 8) throw new PlatformNotSupportedException("Le lecteur libmpv nécessite une application x64.");
+
+        lock (_sync)
+        {
+            _userPaused = false;
+            _playbackActive = false;
+            _pausedForCache = false;
+            _trackChangeResumeUntilUtc = DateTime.MinValue;
+        }
 
         RaiseState(PlayerState.Loading);
         await _lifecycle.WaitAsync(cancellationToken);
@@ -73,11 +87,29 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         }
     }
 
-    public void Play() => SetProperty("pause", "no");
-    public void Pause() => SetProperty("pause", "yes");
+    public void Play()
+    {
+        lock (_sync)
+        {
+            _userPaused = false;
+            _trackChangeResumeUntilUtc = DateTime.MinValue;
+        }
+        SetProperty("pause", "no");
+    }
+
+    public void Pause()
+    {
+        lock (_sync)
+        {
+            _userPaused = true;
+            _trackChangeResumeUntilUtc = DateTime.MinValue;
+        }
+        SetProperty("pause", "yes");
+    }
 
     public void Stop()
     {
+        MarkPlaybackInactive();
         Execute((api, handle) => api.Command(handle, "stop"));
         RaiseState(PlayerState.Stopped);
     }
@@ -93,7 +125,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     public void SelectAudioTrack(long id) => SelectTrack("aid", id);
     public void SelectVideoTrack(long id) => SelectTrack("vid", id);
     public void SelectSubtitleTrack(long id) => SelectTrack("sid", id);
-    public void SetSubtitleEnabled(bool enabled) => SetProperty("sid", enabled ? "auto" : "no");
+    public void SetSubtitleEnabled(bool enabled) => ChangeTrackProperty("sid", enabled ? "auto" : "no");
 
     // Embedded playback is made fullscreen by the owning WPF window, never by a second mpv window.
     public void SetFullscreen(bool fullscreen) { }
@@ -101,7 +133,20 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     private void SelectTrack(string property, long id)
     {
         if (id < 0) throw new ArgumentOutOfRangeException(nameof(id));
-        SetProperty(property, id.ToString(CultureInfo.InvariantCulture));
+        ChangeTrackProperty(property, id.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private void ChangeTrackProperty(string property, string value)
+    {
+        bool resumeAfterChange;
+        lock (_sync)
+        {
+            resumeAfterChange = _playbackActive && !_userPaused;
+            _trackChangeResumeUntilUtc = resumeAfterChange ? DateTime.UtcNow + TrackChangeResumeWindow : DateTime.MinValue;
+        }
+
+        SetProperty(property, value);
+        if (resumeAfterChange) SetProperty("pause", "no");
     }
 
     private void SetProperty(string name, string value) => Execute((api, handle) => api.SetPropertyString(handle, name, value));
@@ -151,6 +196,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             RequiredSuccess(api.ObserveProperty(handle, 3, "time-pos", MpvFormat.Double));
             RequiredSuccess(api.ObserveProperty(handle, 4, "duration", MpvFormat.Double));
             RequiredSuccess(api.ObserveProperty(handle, 5, "track-list", MpvFormat.Node));
+            RequiredSuccess(api.ObserveProperty(handle, 6, "paused-for-cache", MpvFormat.Flag));
         }
         catch
         {
@@ -188,12 +234,23 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
                         await Task.Yield();
                         break;
                     case MpvEventKind.FileLoaded:
-                        RaiseState(PlayerState.Playing);
+                    {
+                        bool userPaused;
+                        lock (_sync)
+                        {
+                            _playbackActive = true;
+                            _pausedForCache = false;
+                            userPaused = _userPaused;
+                        }
+                        RaiseState(userPaused ? PlayerState.Paused : PlayerState.Playing);
                         break;
+                    }
                     case MpvEventKind.EndFile:
+                        MarkPlaybackInactive();
                         RaiseState(PlayerState.Stopped);
                         break;
                     case MpvEventKind.Shutdown:
+                        MarkPlaybackInactive();
                         RaiseState(PlayerState.Stopped);
                         return;
                     case MpvEventKind.PropertyChange:
@@ -214,9 +271,64 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         switch (name)
         {
             case "pause" when value is bool paused:
-                RaiseState(paused ? PlayerState.Paused : PlayerState.Playing);
+            {
+                bool userPaused;
+                bool buffering;
+                bool autoResume;
+                lock (_sync)
+                {
+                    userPaused = _userPaused;
+                    buffering = _pausedForCache;
+                    autoResume = paused && ShouldAutoResumeTrackChangeLocked();
+                }
+
+                if (autoResume)
+                {
+                    SetProperty("pause", "no");
+                    RaiseState(buffering ? PlayerState.Loading : PlayerState.Playing, buffering ? "Mise en mémoire tampon…" : null);
+                }
+                else if (buffering && !userPaused)
+                {
+                    RaiseState(PlayerState.Loading, "Mise en mémoire tampon…");
+                }
+                else if (userPaused)
+                {
+                    RaiseState(PlayerState.Paused);
+                }
+                else
+                {
+                    RaiseState(paused ? PlayerState.Paused : PlayerState.Playing);
+                }
                 break;
+            }
+            case "paused-for-cache" when value is bool buffering:
+            {
+                bool userPaused;
+                bool autoResume;
+                lock (_sync)
+                {
+                    _pausedForCache = buffering;
+                    userPaused = _userPaused;
+                    autoResume = !buffering && ShouldAutoResumeTrackChangeLocked();
+                }
+
+                if (buffering && !userPaused)
+                {
+                    RaiseState(PlayerState.Loading, "Mise en mémoire tampon…");
+                }
+                else if (userPaused)
+                {
+                    RaiseState(PlayerState.Paused);
+                }
+                else
+                {
+                    if (autoResume) SetProperty("pause", "no");
+                    RaiseState(PlayerState.Playing);
+                }
+                break;
+            }
             case "idle-active" when value is true:
+                MarkPlaybackInactive();
                 RaiseState(PlayerState.Idle);
                 break;
             case "time-pos":
@@ -231,6 +343,19 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
                 lock (_sync) _tracks = tracks.ToArray();
                 TrackListChanged?.Invoke(this, new(_tracks));
                 break;
+        }
+    }
+
+    private bool ShouldAutoResumeTrackChangeLocked() =>
+        _playbackActive && !_userPaused && DateTime.UtcNow <= _trackChangeResumeUntilUtc;
+
+    private void MarkPlaybackInactive()
+    {
+        lock (_sync)
+        {
+            _playbackActive = false;
+            _pausedForCache = false;
+            _trackChangeResumeUntilUtc = DateTime.MinValue;
         }
     }
 
@@ -290,6 +415,10 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             _eventCancellation = null;
             _eventLoop = null;
             _tracks = [];
+            _userPaused = false;
+            _playbackActive = false;
+            _pausedForCache = false;
+            _trackChangeResumeUntilUtc = DateTime.MinValue;
         }
 
         if (api is null) return;

@@ -139,6 +139,52 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
+    public async Task TrackChangeResumesAfterCachePauseButRespectsExplicitUserPause()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+        var initialPlaying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var buffering = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sawBuffering = 0;
+
+        player.StateChanged += (_, value) =>
+        {
+            if (value.State == PlayerState.Playing && Volatile.Read(ref sawBuffering) == 0) initialPlaying.TrySetResult();
+            if (value.State == PlayerState.Loading && value.SafeMessage == "Mise en mémoire tampon…")
+            {
+                Interlocked.Exchange(ref sawBuffering, 1);
+                buffering.TrySetResult();
+            }
+            else if (value.State == PlayerState.Playing && Volatile.Read(ref sawBuffering) == 1)
+            {
+                resumed.TrySetResult();
+            }
+        };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/private")), (nint)777);
+        api.Enqueue(new(MpvEventKind.FileLoaded));
+        await initialPlaying.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        player.SelectAudioTrack(4);
+        var pauseNoBeforeCacheEnd = api.Properties.Count(value => value is ("pause", "no"));
+        Assert.True(pauseNoBeforeCacheEnd >= 1);
+
+        api.Enqueue(new(MpvEventKind.PropertyChange, "paused-for-cache", true));
+        await buffering.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        api.Enqueue(new(MpvEventKind.PropertyChange, "paused-for-cache", false));
+        await resumed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(api.Properties.Count(value => value is ("pause", "no")) > pauseNoBeforeCacheEnd);
+        Assert.Contains("paused-for-cache", api.ObservedProperties);
+
+        player.Pause();
+        var pauseNoAfterExplicitPause = api.Properties.Count(value => value is ("pause", "no"));
+        player.SelectSubtitleTrack(7);
+        Assert.Equal(pauseNoAfterExplicitPause, api.Properties.Count(value => value is ("pause", "no")));
+    }
+
+    [Fact]
     public async Task LibMpvControlsAndDisposeUseOwnedNativeHandle()
     {
         var api = new RecordingMpvApi();
@@ -167,6 +213,7 @@ public sealed class PlayerPhase3Tests
         Assert.Contains(("sid", "7"), api.Properties);
         Assert.Contains(("sid", "no"), api.Properties);
         Assert.Contains("idle-active", api.ObservedProperties);
+        Assert.Contains("paused-for-cache", api.ObservedProperties);
         Assert.DoesNotContain("core-idle", api.ObservedProperties);
         Assert.True(api.Terminated);
         Assert.True(api.Disposed);
