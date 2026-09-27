@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="IPTV Explorer">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="1" stop-color="#30d2c3"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="#080e19"/>
+  <rect x="18" y="18" width="220" height="220" rx="50" fill="none" stroke="url(#g)" stroke-width="20"/>
+  <rect x="40" y="40" width="176" height="176" rx="40" fill="#0a1424"/>
+  <text x="124" y="151" text-anchor="middle" fill="#f8fafc" font-family="Segoe UI, Arial, sans-serif" font-size="90" font-weight="800" letter-spacing="-6">IE</text>
+  <path d="M177 167 L177 204 L211 185.5 Z" fill="#30d2c3"/>
+</svg>

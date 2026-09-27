@@ -20,6 +20,8 @@ public partial class App : Application
         base.OnStartup(e);
         try
         {
+            WindowAppearance.EnableForAllWindows();
+
             var builder = Host.CreateApplicationBuilder(e.Args);
             var paths = new AppPaths();
             builder.Logging.ClearProviders();

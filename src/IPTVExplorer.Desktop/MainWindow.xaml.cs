@@ -37,6 +37,8 @@ public partial class MainWindow : Window
 
             var mediaActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "media-actions.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
+            var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
         }
         catch (Exception exception)
