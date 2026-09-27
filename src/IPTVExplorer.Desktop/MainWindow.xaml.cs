@@ -15,7 +15,23 @@ public partial class MainWindow : Window
         _bridge = bridge;
         _mediaActions = mediaActions;
         InitializeComponent();
+        Loaded += FitWindowToWorkArea;
         Loaded += InitializeWebViewAsync;
+    }
+
+    private void FitWindowToWorkArea(object? sender, RoutedEventArgs e)
+    {
+        var workArea = SystemParameters.WorkArea;
+        const double margin = 16;
+
+        MaxWidth = Math.Max(MinWidth, workArea.Width - (margin * 2));
+        MaxHeight = Math.Max(MinHeight, workArea.Height - (margin * 2));
+
+        Width = Math.Min(Width, MaxWidth);
+        Height = Math.Min(Height, MaxHeight);
+
+        Left = workArea.Left + Math.Max(margin, (workArea.Width - Width) / 2);
+        Top = workArea.Top + Math.Max(margin, (workArea.Height - Height) / 2);
     }
 
     private async void InitializeWebViewAsync(object sender, RoutedEventArgs e)
