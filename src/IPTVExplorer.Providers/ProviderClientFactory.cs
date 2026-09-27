@@ -37,10 +37,13 @@ public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecre
 
 public static class ProviderHttpRegistration
 {
+    public const string AppUserAgent = "IPTVExplorerDesktop/1.0";
+    public const string MediaUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVExplorerDesktop/1.0";
+
     public static void Configure(HttpClient client)
     {
         client.Timeout = TimeSpan.FromSeconds(30);
         client.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate, br");
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("IPTVExplorerDesktop/0.2");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(AppUserAgent);
     }
 }
