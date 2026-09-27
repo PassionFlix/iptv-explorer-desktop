@@ -13,9 +13,12 @@ internal static class WindowAppearance
     private const int DwmwaTextColor = 36;
     private const int DwmwaWindowCornerPreference = 33;
     private const int DwmwcpRound = 2;
+    private const string AppUserModelId = "PassionFlix.IPTVExplorer.Desktop";
 
     public static void EnableForAllWindows()
     {
+        _ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+
         EventManager.RegisterClassHandler(
             typeof(Window),
             FrameworkElement.LoadedEvent,
@@ -46,6 +49,9 @@ internal static class WindowAppearance
     }
 
     private static int ColorRef(byte red, byte green, byte blue) => red | (green << 8) | (blue << 16);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int valueSize);
