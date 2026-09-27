@@ -41,6 +41,7 @@ public partial class App : Application
             builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();
             builder.Services.AddSingleton<BridgeRouter>();
+            builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
             builder.Services.AddHttpClient("providers", ProviderHttpRegistration.Configure)
                 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -55,7 +56,9 @@ public partial class App : Application
             _host = builder.Build();
             await _host.Services.GetRequiredService<DatabaseInitializer>().InitializeAsync();
             await _host.StartAsync();
-            var window = new MainWindow(_host.Services.GetRequiredService<BridgeRouter>());
+            var window = new MainWindow(
+                _host.Services.GetRequiredService<BridgeRouter>(),
+                _host.Services.GetRequiredService<MediaActionBridge>());
             MainWindow = window;
             window.Show();
         }
