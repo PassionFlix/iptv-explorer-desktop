@@ -8,10 +8,12 @@ namespace IPTVExplorer.Desktop;
 public partial class MainWindow : Window
 {
     private readonly BridgeRouter _bridge;
+    private readonly MediaActionBridge _mediaActions;
 
-    public MainWindow(BridgeRouter bridge)
+    public MainWindow(BridgeRouter bridge, MediaActionBridge mediaActions)
     {
         _bridge = bridge;
+        _mediaActions = mediaActions;
         InitializeComponent();
         Loaded += InitializeWebViewAsync;
     }
@@ -32,6 +34,9 @@ public partial class MainWindow : Window
             {
                 if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var uri) || !string.Equals(uri.Host, "appassets.local", StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
             };
+
+            var mediaActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "media-actions.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
         }
         catch (Exception exception)
@@ -46,7 +51,7 @@ public partial class MainWindow : Window
     {
         var message = e.WebMessageAsJson;
         if (message.Length > 2_000_000) return;
-        var response = await _bridge.HandleAsync(message);
+        var response = await _mediaActions.TryHandleAsync(message) ?? await _bridge.HandleAsync(message);
         Browser.CoreWebView2.PostWebMessageAsJson(response);
     }
 }
