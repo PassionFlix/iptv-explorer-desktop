@@ -7,7 +7,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>Assets\IPTVExplorer.ico</ApplicationIcon>
+    <ApplicationIcon>$(BaseIntermediateOutputPath)IPTVExplorer.generated.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\IPTVExplorer.Core\IPTVExplorer.Core.csproj" />
@@ -19,9 +19,12 @@
     <PackageReference Include="Microsoft.Web.WebView2" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="Assets\IPTVExplorer.ico" />
     <Content Include="ui\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="native\mpv\libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\libmpv-2.dll')" />
     <Content Include="native\mpv\README.txt" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\README.txt')" />
   </ItemGroup>
+  <Target Name="GenerateApplicationIcon" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <MakeDir Directories="$(BaseIntermediateOutputPath)" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Generate-AppIcon.ps1&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)IPTVExplorer.generated.ico&quot;" />
+  </Target>
 </Project>
