@@ -101,7 +101,8 @@ public sealed class BridgeRouter(
         var preferences = await settings.GetAsync(cancellationToken);
         var active = list.FirstOrDefault(provider => provider.Enabled && provider.Key == preferences.ActiveProviderKey)?.Key ?? list.FirstOrDefault(provider => provider.Enabled)?.Key;
         if (active != preferences.ActiveProviderKey) await settings.SaveAsync(preferences with { ActiveProviderKey = active }, cancellationToken);
-        return new { product = "IPTV Explorer Desktop", version = "0.2.0-dev", providerCount = list.Count, activeProviderKey = active, providers = list.Select(SafeProvider) };
+        var version = typeof(BridgeRouter).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+        return new { product = "IPTV Explorer Desktop", version, providerCount = list.Count, activeProviderKey = active, providers = list.Select(SafeProvider) };
     }
 
     private async Task<object> SetActiveProvider(ActiveProviderRequest input, CancellationToken cancellationToken)
