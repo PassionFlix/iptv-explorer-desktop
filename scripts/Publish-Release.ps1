@@ -115,26 +115,7 @@ try {
 
         $setupIconPath = Join-Path $OutputRoot 'IPTVExplorer.Setup.ico'
         if (Test-Path -LiteralPath $setupIconPath) { Remove-Item -LiteralPath $setupIconPath -Force }
-
-        Add-Type -AssemblyName System.Drawing
-        $setupIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($publishedExe)
-        if (-not $setupIcon) { throw 'Impossible d’extraire l’icône intégrée de l’application publiée.' }
-        try {
-            $iconStream = [System.IO.File]::Create($setupIconPath)
-            try {
-                $setupIcon.Save($iconStream)
-            }
-            finally {
-                $iconStream.Dispose()
-            }
-        }
-        finally {
-            $setupIcon.Dispose()
-        }
-
-        if (-not (Test-Path -LiteralPath $setupIconPath) -or (Get-Item -LiteralPath $setupIconPath).Length -lt 64) {
-            throw 'L’icône temporaire de l’installateur est invalide.'
-        }
+        & (Join-Path $PSScriptRoot 'Generate-AppIcon.ps1') -OutputPath $setupIconPath
 
         $installerScript = Join-Path $repoRoot 'installer\IPTVExplorer.iss'
         try {
