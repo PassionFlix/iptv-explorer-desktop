@@ -24,14 +24,14 @@ public partial class MainWindow : Window
         var workArea = SystemParameters.WorkArea;
         const double margin = 16;
 
-        MaxWidth = Math.Max(MinWidth, workArea.Width - (margin * 2));
-        MaxHeight = Math.Max(MinHeight, workArea.Height - (margin * 2));
+        var availableWidth = Math.Max(MinWidth, workArea.Width - (margin * 2));
+        var availableHeight = Math.Max(MinHeight, workArea.Height - (margin * 2));
 
-        Width = Math.Min(Width, MaxWidth);
-        Height = Math.Min(Height, MaxHeight);
+        Width = Math.Min(Width, availableWidth);
+        Height = Math.Min(Height, availableHeight);
 
-        Left = workArea.Left + Math.Max(margin, (workArea.Width - Width) / 2);
-        Top = workArea.Top + Math.Max(margin, (workArea.Height - Height) / 2);
+        Left = workArea.Left + Math.Max(0, (workArea.Width - Width) / 2);
+        Top = workArea.Top + Math.Max(0, (workArea.Height - Height) / 2);
     }
 
     private async void InitializeWebViewAsync(object sender, RoutedEventArgs e)
