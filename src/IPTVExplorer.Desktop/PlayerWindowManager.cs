@@ -23,7 +23,6 @@ public sealed class PlayerWindowManager(IPlayerService player) : IPlayerWindowMa
             if (Application.Current.MainWindow is { } owner && owner != _window)
             {
                 _window.Owner = owner;
-                _window.Icon = owner.Icon;
             }
             _window.Closed += (_, _) => _window = null;
             _window.Show();
