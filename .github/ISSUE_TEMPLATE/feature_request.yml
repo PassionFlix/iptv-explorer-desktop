@@ -1,0 +1,26 @@
+name: Feature request
+about: Proposer une amélioration
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de ne publier aucune information d'accès à un fournisseur IPTV.
+  - type: textarea
+    id: need
+    attributes:
+      label: Besoin
+      description: Quel problème ou usage souhaitez-vous améliorer ?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposition
+      description: Décrivez la solution souhaitée.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives envisagées

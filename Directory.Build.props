@@ -6,8 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
-    <Version>0.2.0-dev</Version>
-    <Company>IPTV Explorer</Company>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <Company>PassionFlix</Company>
+    <Authors>PassionFlix</Authors>
     <Product>IPTV Explorer Desktop</Product>
+    <Description>Desktop IPTV explorer for Xtream Codes and Stalker/MAG providers.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/PassionFlix/iptv-explorer-desktop</RepositoryUrl>
+    <Copyright>Copyright © 2026 PassionFlix</Copyright>
   </PropertyGroup>
 </Project>
