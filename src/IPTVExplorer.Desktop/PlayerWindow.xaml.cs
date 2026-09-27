@@ -81,6 +81,11 @@ public partial class PlayerWindow : Window
 
     private void OnPlayPause(object sender, RoutedEventArgs e)
     {
+        TogglePlayPause();
+    }
+
+    private void TogglePlayPause()
+    {
         if (_state == PlayerState.Paused) _player.Play(); else _player.Pause();
     }
 
@@ -126,7 +131,25 @@ public partial class PlayerWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && _fullscreen) SetFullscreen(false);
+        if (e.Key == Key.Escape && _fullscreen)
+        {
+            SetFullscreen(false);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F11)
+        {
+            SetFullscreen(!_fullscreen);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Space && Keyboard.FocusedElement is not System.Windows.Controls.ComboBox)
+        {
+            TogglePlayPause();
+            e.Handled = true;
+        }
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
@@ -144,9 +167,56 @@ public partial class PlayerWindow : Window
     {
         public static TrackChoice From(MediaTrack track)
         {
-            var language = string.IsNullOrWhiteSpace(track.Language) ? "indéterminée" : track.Language;
-            var title = string.IsNullOrWhiteSpace(track.Title) ? string.Empty : $" — {track.Title}";
-            return new(track.Id, $"{language}{title}", track.Selected);
+            var language = FriendlyLanguage(track.Language);
+            var details = new List<string>();
+            var title = CleanTrackTitle(track.Title, track.Language);
+            if (title is not null) details.Add(title);
+            if (!string.IsNullOrWhiteSpace(track.Codec)) details.Add(track.Codec.ToUpperInvariant());
+            if (track.Channels is int channels && channels > 0)
+            {
+                details.Add(channels switch
+                {
+                    1 => "Mono",
+                    2 => "Stéréo",
+                    _ => $"{channels} canaux"
+                });
+            }
+
+            var label = details.Count == 0 ? language : $"{language} · {string.Join(" · ", details)}";
+            return new(track.Id, label, track.Selected);
+        }
+
+        private static string FriendlyLanguage(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "Langue indéterminée";
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "fr" or "fra" or "fre" => "Français",
+                "en" or "eng" => "Anglais",
+                "es" or "spa" => "Espagnol",
+                "de" or "deu" or "ger" => "Allemand",
+                "it" or "ita" => "Italien",
+                "pt" or "por" => "Portugais",
+                "ja" or "jpn" => "Japonais",
+                "ko" or "kor" => "Coréen",
+                "zh" or "chi" or "zho" => "Chinois",
+                "ori" => "Version originale",
+                "und" or "oth" => "Autre",
+                _ => value.Trim().ToUpperInvariant()
+            };
+        }
+
+        private static string? CleanTrackTitle(string? title, string? language)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return null;
+            var value = title.Trim();
+            if (!string.IsNullOrWhiteSpace(language) && string.Equals(value, language.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
+            if (value.Equals("oth", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("ori", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("fra", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("fre", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("eng", StringComparison.OrdinalIgnoreCase)) return null;
+            return value;
         }
 
         public override string ToString() => Label;
