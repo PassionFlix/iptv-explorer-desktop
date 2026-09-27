@@ -77,13 +77,41 @@ try {
     $releaseFiles.Add($zipPath)
 
     if ($BuildInstaller) {
-        $isccCandidates = @(
-            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
-        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
-        $iscc = $isccCandidates | Select-Object -First 1
-        if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) est requis pour -BuildInstaller." }
+        $isccCandidates = [System.Collections.Generic.List[string]]::new()
 
+        $isccCommand = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($isccCommand -and $isccCommand.Source) {
+            $isccCandidates.Add($isccCommand.Source)
+        }
+
+        foreach ($candidate in @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')
+        )) {
+            if ($candidate) { $isccCandidates.Add($candidate) }
+        }
+
+        $localPrograms = Join-Path $env:LOCALAPPDATA 'Programs'
+        if (Test-Path -LiteralPath $localPrograms) {
+            Get-ChildItem -LiteralPath $localPrograms -Directory -Filter 'Inno Setup*' -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending |
+                ForEach-Object {
+                    $candidate = Join-Path $_.FullName 'ISCC.exe'
+                    if (Test-Path -LiteralPath $candidate) { $isccCandidates.Add($candidate) }
+                }
+        }
+
+        $iscc = $isccCandidates |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+            Select-Object -Unique |
+            Select-Object -First 1
+
+        if (-not $iscc) {
+            throw "Inno Setup 6 (ISCC.exe) est requis pour -BuildInstaller. Le script vérifie PATH, Program Files et LOCALAPPDATA\Programs."
+        }
+
+        Write-Host "Inno Setup détecté : $iscc"
         $installerScript = Join-Path $repoRoot 'installer\IPTVExplorer.iss'
         & $iscc "/DAppVersion=$Version" "/DSourceDir=$publishDir" "/DOutputDir=$OutputRoot" $installerScript
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup a échoué (code $LASTEXITCODE)." }
