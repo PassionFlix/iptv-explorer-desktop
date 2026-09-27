@@ -155,7 +155,9 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RepeatButton">
-            <Border Background="{TemplateBinding Background}" CornerRadius="3" />
+            <Grid Background="Transparent">
+              <Border Height="5" VerticalAlignment="Center" Background="{TemplateBinding Background}" CornerRadius="3" />
+            </Grid>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
@@ -172,7 +174,7 @@
         <Setter.Value>
           <ControlTemplate TargetType="Slider">
             <Grid Background="Transparent" ClipToBounds="False">
-              <Track x:Name="PART_Track" VerticalAlignment="Center" Height="5">
+              <Track x:Name="PART_Track" VerticalAlignment="Center" Height="20">
                 <Track.DecreaseRepeatButton>
                   <RepeatButton Command="Slider.DecreaseLarge" Background="{TemplateBinding Foreground}"
                                 Style="{StaticResource SliderRepeatButton}" />
