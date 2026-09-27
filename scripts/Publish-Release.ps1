@@ -112,9 +112,38 @@ try {
         }
 
         Write-Host "Inno Setup détecté : $iscc"
+
+        $setupIconPath = Join-Path $OutputRoot 'IPTVExplorer.Setup.ico'
+        if (Test-Path -LiteralPath $setupIconPath) { Remove-Item -LiteralPath $setupIconPath -Force }
+
+        Add-Type -AssemblyName System.Drawing
+        $setupIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($publishedExe)
+        if (-not $setupIcon) { throw 'Impossible d’extraire l’icône intégrée de l’application publiée.' }
+        try {
+            $iconStream = [System.IO.File]::Create($setupIconPath)
+            try {
+                $setupIcon.Save($iconStream)
+            }
+            finally {
+                $iconStream.Dispose()
+            }
+        }
+        finally {
+            $setupIcon.Dispose()
+        }
+
+        if (-not (Test-Path -LiteralPath $setupIconPath) -or (Get-Item -LiteralPath $setupIconPath).Length -lt 64) {
+            throw 'L’icône temporaire de l’installateur est invalide.'
+        }
+
         $installerScript = Join-Path $repoRoot 'installer\IPTVExplorer.iss'
-        & $iscc "/DAppVersion=$Version" "/DSourceDir=$publishDir" "/DOutputDir=$OutputRoot" $installerScript
-        if ($LASTEXITCODE -ne 0) { throw "Inno Setup a échoué (code $LASTEXITCODE)." }
+        try {
+            & $iscc "/DAppVersion=$Version" "/DSourceDir=$publishDir" "/DOutputDir=$OutputRoot" $installerScript
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup a échoué (code $LASTEXITCODE)." }
+        }
+        finally {
+            if (Test-Path -LiteralPath $setupIconPath) { Remove-Item -LiteralPath $setupIconPath -Force }
+        }
 
         $setupPath = Join-Path $OutputRoot "IPTV-Explorer-Setup-$Version-x64.exe"
         if (-not (Test-Path -LiteralPath $setupPath)) { throw "Installateur attendu introuvable : $setupPath" }
