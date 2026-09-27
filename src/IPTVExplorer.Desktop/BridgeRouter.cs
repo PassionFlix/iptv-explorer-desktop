@@ -128,7 +128,23 @@ public sealed class BridgeRouter(
     }
 
     private async Task<object> ProviderList(CancellationToken cancellationToken) => (await providers.ListAsync(cancellationToken)).Select(SafeProvider).ToArray();
-    private async Task<ProviderRecord> SaveProvider(SaveProviderRequest input, CancellationToken cancellationToken) => await onboarding.SaveAsync(input.DraftId, new ProviderSaveOptions(input.Enable, input.Policies), cancellationToken);
+
+    private async Task<ProviderRecord> SaveProvider(SaveProviderRequest input, CancellationToken cancellationToken)
+    {
+        var provider = await onboarding.SaveAsync(input.DraftId, new ProviderSaveOptions(input.Enable, input.Policies), cancellationToken);
+        if (!provider.Enabled) return provider;
+
+        var summaries = await providers.GetCategorySummariesAsync(provider.Key, cancellationToken);
+        var hasSearchableSelection = summaries.Any(summary =>
+            summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.Selected > 0);
+        var existingJob = await jobs.LatestAsync(provider.Key, cancellationToken);
+        if (hasSearchableSelection && existingJob is null)
+        {
+            await jobs.QueueAsync(provider.Key, cancellationToken);
+        }
+
+        return provider;
+    }
 
     private async Task<object> Dashboard(string providerKey, CancellationToken cancellationToken)
     {
