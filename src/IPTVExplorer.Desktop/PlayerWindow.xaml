@@ -227,6 +227,7 @@
           <RowDefinition Height="Auto" />
           <RowDefinition Height="Auto" />
           <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
@@ -276,7 +277,12 @@
                   ToolTip="Basculer le plein écran (F11)">Plein écran</Button>
         </Grid>
 
-        <Grid Grid.Row="2" Margin="0,11,0,0">
+        <StackPanel x:Name="EpisodePanel" Grid.Row="2" Margin="0,11,0,0" Visibility="Collapsed">
+          <TextBlock Style="{StaticResource SectionLabel}" Text="ÉPISODE" Margin="2,0,0,5" />
+          <ComboBox x:Name="EpisodeSelector" Style="{StaticResource TrackCombo}" SelectionChanged="OnEpisodeChanged" />
+        </StackPanel>
+
+        <Grid Grid.Row="3" Margin="0,11,0,0">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="16" />
