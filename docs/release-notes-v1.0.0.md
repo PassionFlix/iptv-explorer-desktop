@@ -6,15 +6,18 @@ Première version stable publique d'IPTV Explorer Desktop pour Windows 10/11 x64
 
 - Fournisseurs Xtream Codes et Stalker/MAG.
 - Live, Films, Séries et recherche locale.
+- Construction automatique du premier index de recherche après l'ajout d'un fournisseur actif.
 - Lecteur libmpv natif intégré.
 - Audio MULTi, sous-titres, seek, volume et plein écran.
-- Téléchargement VOD et copie du lien contrôlés côté C#.
+- Sélecteur d'épisodes directement dans le lecteur pour changer d'épisode sans fermer la fenêtre.
+- Téléchargement Films et épisodes avec progression, débit et annulation.
+- Copie du lien média contrôlée côté C#.
 - Secrets protégés par Windows DPAPI CurrentUser.
 - Aucun fournisseur ou credential préconfiguré.
 
 ## Téléchargements
 
-- **Setup x64** : recommandé pour une installation Windows classique.
+- **Setup x64** : recommandé pour une installation Windows classique et les mises à jour par-dessus une installation existante.
 - **Portable ZIP** : extraire puis lancer `IPTVExplorer.Desktop.exe`.
 - **SHA256SUMS.txt** : permet de vérifier l'intégrité des artefacts.
 
