@@ -26,6 +26,7 @@
       const providerKey = document.querySelector('#provider-select')?.value || '';
       currentVod = {
         providerKey,
+        mediaType: 'vod',
         mediaId: String(result.id ?? ''),
         extension: result.extension || null,
         suggestedName: result.title || document.querySelector('#detail-title')?.textContent || 'video'
@@ -169,6 +170,47 @@
     }
   }
 
+  function wireDownload(button, reference, progressHost) {
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      const original = button.textContent;
+      button.textContent = 'Choisir la destination…';
+      try {
+        const result = await rpc('media.download.start', reference);
+        if (result?.cancelled) {
+          button.disabled = false;
+          button.textContent = original;
+          return;
+        }
+        if (!result?.started || !result.downloadId) throw new Error('Impossible de démarrer le téléchargement.');
+
+        button.textContent = 'Téléchargement…';
+        const view = createProgressPanel(progressHost, result.downloadId, result.fileName, button, original);
+        monitorDownload(result.downloadId, view);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = original;
+        showToast(error.message, true);
+      }
+    });
+  }
+
+  function wireCopy(button, reference) {
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        await rpc('media.copyLink', reference);
+        showToast('Lien copié dans le presse-papiers.');
+      } catch (error) {
+        showToast(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
   function decorateVodActions() {
     if (!currentVod?.providerKey || !currentVod.mediaId) return;
     const content = document.querySelector('#detail-content');
@@ -185,45 +227,31 @@
     play.replaceWith(actions);
     actions.append(play);
 
-    const download = actionButton('↓ Télécharger', 'secondary', async () => {
-      if (!currentVod || download.disabled) return;
-      download.disabled = true;
-      const original = download.textContent;
-      download.textContent = 'Choisir la destination…';
-      try {
-        const result = await rpc('media.download.start', currentVod);
-        if (result?.cancelled) {
-          download.disabled = false;
-          download.textContent = original;
-          return;
-        }
-        if (!result?.started || !result.downloadId) throw new Error('Impossible de démarrer le téléchargement.');
+    const download = actionButton('↓ Télécharger', 'secondary', () => {});
+    download.replaceWith(download);
+    wireDownload(download, currentVod, copy);
 
-        download.textContent = 'Téléchargement…';
-        const view = createProgressPanel(copy, result.downloadId, result.fileName, download, original);
-        monitorDownload(result.downloadId, view);
-      } catch (error) {
-        download.disabled = false;
-        download.textContent = original;
-        showToast(error.message, true);
-      }
-    });
-
-    const copyLink = actionButton('⧉ Copier le lien', 'secondary', async () => {
-      if (!currentVod || copyLink.disabled) return;
-      copyLink.disabled = true;
-      try {
-        await rpc('media.copyLink', currentVod);
-        showToast('Lien copié dans le presse-papiers.');
-      } catch (error) {
-        showToast(error.message, true);
-      } finally {
-        copyLink.disabled = false;
-      }
-    });
-
+    const copyLink = actionButton('⧉ Copier le lien', 'secondary', () => {});
+    wireCopy(copyLink, currentVod);
     actions.append(download, copyLink);
   }
+
+  function decorateEpisode(actionsHost, reference) {
+    if (!actionsHost || actionsHost.querySelector('.desktop-episode-download')) return;
+    if (!reference?.providerKey || !reference.mediaId || !reference.episodeId) return;
+
+    const row = actionsHost.closest('.episode') || actionsHost;
+    row.classList.add('has-download');
+
+    const download = actionButton('Télécharger', 'secondary desktop-episode-download', () => {});
+    wireDownload(download, reference, row);
+
+    const copyLink = actionButton('Copier le lien', 'secondary desktop-episode-copy', () => {});
+    wireCopy(copyLink, reference);
+    actionsHost.append(download, copyLink);
+  }
+
+  window.IPTVMediaActions = Object.freeze({ decorateEpisode });
 
   function initialize() {
     const style = document.createElement('style');
@@ -239,6 +267,10 @@
       .desktop-download-track.indeterminate span{width:35%;position:absolute;animation:iptv-download-indeterminate 1.2s ease-in-out infinite}
       .desktop-download-meta{color:#9fb0c7;font-size:13px;font-variant-numeric:tabular-nums}
       .desktop-download-cancel{justify-self:start}
+      .episode.has-download{flex-wrap:wrap;gap:8px}
+      .episode-actions{display:flex;align-items:center;gap:7px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+      .episode-actions .play-small{margin-left:0}
+      .episode.has-download>.desktop-download-progress{flex:1 0 100%;width:100%;margin-top:4px}
       @keyframes iptv-download-indeterminate{0%{left:-35%}100%{left:100%}}
     `;
     document.head.append(style);
