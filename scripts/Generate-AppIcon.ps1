@@ -144,7 +144,7 @@ finally {
 }
 
 if (-not (Test-Path -LiteralPath $fullOutputPath) -or (Get-Item -LiteralPath $fullOutputPath).Length -lt 1024) {
-    throw 'La génération de l’icône Windows a échoué.'
+    throw "La génération de l'icône Windows a échoué."
 }
 
 Write-Host "Icône Windows générée : $fullOutputPath"
