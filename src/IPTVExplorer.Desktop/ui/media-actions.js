@@ -3,6 +3,7 @@
 
   let sequence = 0;
   let currentVod = null;
+  let currentSeries = null;
   const pending = new Map();
 
   function rpc(method, params) {
@@ -22,8 +23,29 @@
     }
 
     const result = response?.ok ? response.result : null;
-    if (result && typeof result === 'object' && 'id' in result && 'title' in result && 'duration' in result && !('seasons' in result)) {
-      const providerKey = document.querySelector('#provider-select')?.value || '';
+    if (!result || typeof result !== 'object' || !('id' in result) || !('title' in result)) return;
+
+    const providerKey = document.querySelector('#provider-select')?.value || '';
+    if ('seasons' in result) {
+      currentSeries = {
+        providerKey,
+        mediaType: 'series',
+        mediaId: String(result.id ?? ''),
+        title: result.title || document.querySelector('#detail-title')?.textContent || 'serie',
+        episodes: (result.seasons || []).flatMap(season => (season.episodes || []).map(episode => ({
+          episodeId: String(episode.id ?? ''),
+          extension: episode.extension || null,
+          season: Number(episode.season ?? season.number ?? 1),
+          episode: Number(episode.episode ?? 0),
+          title: episode.title || 'Episode'
+        })))
+      };
+      currentVod = null;
+      queueMicrotask(decorateSeriesActions);
+      return;
+    }
+
+    if ('duration' in result) {
       currentVod = {
         providerKey,
         mediaType: 'vod',
@@ -31,6 +53,7 @@
         extension: result.extension || null,
         suggestedName: result.title || document.querySelector('#detail-title')?.textContent || 'video'
       };
+      currentSeries = null;
       queueMicrotask(decorateVodActions);
     }
   });
@@ -44,12 +67,11 @@
     window.setTimeout(() => toast.classList.remove('show'), 3200);
   }
 
-  function actionButton(label, className, action) {
+  function actionButton(label, className) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = className;
     button.textContent = label;
-    button.addEventListener('click', action);
     return button;
   }
 
@@ -90,7 +112,8 @@
     meta.className = 'desktop-download-meta';
     meta.textContent = 'Connexion au fournisseur…';
 
-    const cancel = actionButton('Annuler', 'secondary desktop-download-cancel', async () => {
+    const cancel = actionButton('Annuler', 'secondary desktop-download-cancel');
+    cancel.addEventListener('click', async () => {
       if (cancel.disabled) return;
       cancel.disabled = true;
       cancel.textContent = 'Annulation…';
@@ -171,11 +194,12 @@
   }
 
   function wireDownload(button, reference, progressHost) {
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async event => {
+      event.stopPropagation();
       if (button.disabled) return;
       button.disabled = true;
       const original = button.textContent;
-      button.textContent = 'Choisir la destination…';
+      button.textContent = 'Choisir…';
       try {
         const result = await rpc('media.download.start', reference);
         if (result?.cancelled) {
@@ -197,7 +221,8 @@
   }
 
   function wireCopy(button, reference) {
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async event => {
+      event.stopPropagation();
       if (button.disabled) return;
       button.disabled = true;
       try {
@@ -227,31 +252,52 @@
     play.replaceWith(actions);
     actions.append(play);
 
-    const download = actionButton('↓ Télécharger', 'secondary', () => {});
-    download.replaceWith(download);
+    const download = actionButton('↓ Télécharger', 'secondary');
     wireDownload(download, currentVod, copy);
-
-    const copyLink = actionButton('⧉ Copier le lien', 'secondary', () => {});
+    const copyLink = actionButton('⧉ Copier le lien', 'secondary');
     wireCopy(copyLink, currentVod);
     actions.append(download, copyLink);
   }
 
-  function decorateEpisode(actionsHost, reference) {
-    if (!actionsHost || actionsHost.querySelector('.desktop-episode-download')) return;
-    if (!reference?.providerKey || !reference.mediaId || !reference.episodeId) return;
+  function decorateSeriesActions() {
+    if (!currentSeries?.providerKey || !currentSeries.mediaId || !currentSeries.episodes?.length) return;
+    const rows = [...document.querySelectorAll('#detail-content .episode')];
+    if (!rows.length) return;
 
-    const row = actionsHost.closest('.episode') || actionsHost;
-    row.classList.add('has-download');
+    rows.forEach((row, index) => {
+      if (row.querySelector('.desktop-episode-download')) return;
+      const episode = currentSeries.episodes[index];
+      if (!episode?.episodeId) return;
 
-    const download = actionButton('Télécharger', 'secondary desktop-episode-download', () => {});
-    wireDownload(download, reference, row);
+      const play = row.querySelector('button.play-small');
+      if (!play) return;
+      let actions = row.querySelector('.episode-actions');
+      if (!actions) {
+        actions = document.createElement('div');
+        actions.className = 'episode-actions';
+        play.replaceWith(actions);
+        actions.append(play);
+      }
+      row.classList.add('has-download');
 
-    const copyLink = actionButton('Copier le lien', 'secondary desktop-episode-copy', () => {});
-    wireCopy(copyLink, reference);
-    actionsHost.append(download, copyLink);
+      const seasonNumber = String(Math.max(1, episode.season || 1)).padStart(2, '0');
+      const episodeNumber = episode.episode > 0 ? `E${String(episode.episode).padStart(2, '0')}` : '';
+      const reference = {
+        providerKey: currentSeries.providerKey,
+        mediaType: 'series',
+        mediaId: currentSeries.mediaId,
+        episodeId: episode.episodeId,
+        extension: episode.extension,
+        suggestedName: `${currentSeries.title} - S${seasonNumber}${episodeNumber} - ${episode.title}`
+      };
+
+      const download = actionButton('Télécharger', 'secondary desktop-episode-download');
+      wireDownload(download, reference, row);
+      const copyLink = actionButton('Copier le lien', 'secondary desktop-episode-copy');
+      wireCopy(copyLink, reference);
+      actions.append(download, copyLink);
+    });
   }
-
-  window.IPTVMediaActions = Object.freeze({ decorateEpisode });
 
   function initialize() {
     const style = document.createElement('style');
@@ -270,14 +316,15 @@
       .episode.has-download{flex-wrap:wrap;gap:8px}
       .episode-actions{display:flex;align-items:center;gap:7px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
       .episode-actions .play-small{margin-left:0}
+      .episode-actions .secondary{padding:8px 10px}
       .episode.has-download>.desktop-download-progress{flex:1 0 100%;width:100%;margin-top:4px}
       @keyframes iptv-download-indeterminate{0%{left:-35%}100%{left:100%}}
     `;
     document.head.append(style);
 
     const content = document.querySelector('#detail-content');
-    if (content) new MutationObserver(decorateVodActions).observe(content, { childList: true, subtree: true });
-    document.querySelector('#detail-dialog')?.addEventListener('close', () => { currentVod = null; });
+    if (content) new MutationObserver(() => { decorateVodActions(); decorateSeriesActions(); }).observe(content, { childList: true, subtree: true });
+    document.querySelector('#detail-dialog')?.addEventListener('close', () => { currentVod = null; currentSeries = null; });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
