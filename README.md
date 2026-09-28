@@ -16,9 +16,11 @@ L'application est conçue autour d'un principe simple : **aucun fournisseur, ide
 - Assistant d'ajout avec détection, test de connexion et sélection des catégories.
 - Live, Films et Séries avec pagination et fiches détaillées.
 - Recherche locale Films & Séries via index SQLite par fournisseur.
+- Construction automatique du premier index après l'ajout d'un fournisseur actif avec des catégories Films/Séries sélectionnées.
 - Lecteur natif **libmpv** intégré : Live, VOD et épisodes.
+- Sélecteur d'épisodes directement dans le lecteur pour passer d'un épisode au suivant sans fermer la fenêtre.
 - Audio MULTi, sous-titres, volume, seek, plein écran et changement de pistes.
-- Téléchargement VOD et copie du lien média sans exposer les secrets au JavaScript.
+- Téléchargement Films et épisodes avec progression, débit, annulation et copie du lien média.
 - Secrets protégés par **Windows DPAPI CurrentUser**.
 - Aucune URL média credentialisée, MAC, token ou Authorization retourné à l'interface WebView2.
 - Interface sombre, responsive et adaptée à Windows 10/11 x64.
@@ -46,6 +48,7 @@ Le build Release est **self-contained** : le runtime .NET n'a pas besoin d'être
 5. Testez la connexion.
 6. Sélectionnez les catégories souhaitées.
 7. Activez le fournisseur et explorez Live, Films et Séries.
+8. Si des catégories Films ou Séries sont sélectionnées, le premier index de recherche est construit automatiquement en arrière-plan.
 
 Aucune configuration n'est incluse dans l'application distribuée.
 
@@ -61,7 +64,7 @@ Principaux emplacements :
 
 ```text
 data\iptv-explorer.sqlite   configuration non secrète
- data\secrets\              secrets chiffrés DPAPI
+data\secrets\              secrets chiffrés DPAPI
 indexes\                    index de recherche locaux
 cache\                      cache local
 logs\                       journaux redacted
