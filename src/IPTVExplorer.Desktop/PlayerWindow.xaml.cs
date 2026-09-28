@@ -12,11 +12,14 @@ public partial class PlayerWindow : Window
     private readonly TaskCompletionSource<nint> _renderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _seeking;
     private bool _updatingTracks;
+    private bool _updatingEpisodes;
     private bool _fullscreen;
     private WindowStyle _savedStyle;
     private ResizeMode _savedResizeMode;
     private WindowState _savedState;
     private PlayerState _state = PlayerState.Idle;
+    private Func<PlayerEpisodeOption, CancellationToken, Task>? _episodeSelectionHandler;
+    private CancellationTokenSource? _episodeSelectionCancellation;
 
     public PlayerWindow(IPlayerService player)
     {
@@ -29,6 +32,38 @@ public partial class PlayerWindow : Window
     }
 
     public Task<nint> WaitForRenderHandleAsync(CancellationToken cancellationToken) => _renderHandle.Task.WaitAsync(cancellationToken);
+
+    public void ConfigureEpisodes(
+        PlayerSeriesContext? context,
+        Func<PlayerEpisodeOption, CancellationToken, Task>? selectionHandler)
+    {
+        _updatingEpisodes = true;
+        try
+        {
+            _episodeSelectionCancellation?.Cancel();
+            _episodeSelectionCancellation?.Dispose();
+            _episodeSelectionCancellation = null;
+            _episodeSelectionHandler = selectionHandler;
+
+            if (context is null || context.Episodes.Count == 0 || selectionHandler is null)
+            {
+                EpisodeSelector.ItemsSource = null;
+                EpisodePanel.Visibility = Visibility.Collapsed;
+                Title = "Lecteur — IPTV Explorer";
+                return;
+            }
+
+            EpisodeSelector.ItemsSource = context.Episodes;
+            EpisodeSelector.SelectedItem = context.Episodes.FirstOrDefault(episode =>
+                string.Equals(episode.Id, context.SelectedEpisodeId, StringComparison.Ordinal)) ?? context.Episodes[0];
+            EpisodePanel.Visibility = Visibility.Visible;
+            Title = $"Lecteur — {context.SeriesTitle}";
+        }
+        finally
+        {
+            _updatingEpisodes = false;
+        }
+    }
 
     private void OnHandleReady(object? sender, EventArgs e)
     {
@@ -94,6 +129,39 @@ public partial class PlayerWindow : Window
     private void OnSeekCompleted(object sender, MouseButtonEventArgs e) { _player.Seek(TimeSpan.FromSeconds(PositionSlider.Value)); _seeking = false; }
     private void OnVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e) { if (IsLoaded) _player.SetVolume(e.NewValue); }
 
+    private async void OnEpisodeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_updatingEpisodes || EpisodeSelector.SelectedItem is not PlayerEpisodeOption episode || _episodeSelectionHandler is null) return;
+
+        _episodeSelectionCancellation?.Cancel();
+        _episodeSelectionCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _episodeSelectionCancellation = cancellation;
+        EpisodeSelector.IsEnabled = false;
+        StatusText.Text = "Chargement de l’épisode…";
+
+        try
+        {
+            await _episodeSelectionHandler(episode, cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            StatusText.Text = "Impossible de charger l’épisode";
+        }
+        finally
+        {
+            if (ReferenceEquals(_episodeSelectionCancellation, cancellation))
+            {
+                _episodeSelectionCancellation = null;
+                EpisodeSelector.IsEnabled = true;
+            }
+            cancellation.Dispose();
+        }
+    }
+
     private void OnAudioTrackChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (!_updatingTracks && AudioTracks.SelectedItem is TrackChoice { Id: long id }) _player.SelectAudioTrack(id);
@@ -154,6 +222,9 @@ public partial class PlayerWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        _episodeSelectionCancellation?.Cancel();
+        _episodeSelectionCancellation?.Dispose();
+        _episodeSelectionCancellation = null;
         _player.Stop();
         _player.StateChanged -= OnStateChanged;
         _player.PositionChanged -= OnPositionChanged;
