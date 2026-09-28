@@ -39,11 +39,11 @@ try {
 
     [xml]$props = Get-Content -LiteralPath 'Directory.Build.props' -Raw
     if ([string]$props.Project.PropertyGroup.Version -ne '1.0.0') {
-        throw 'Directory.Build.props n’est pas en version 1.0.0.'
+        throw "Directory.Build.props n'est pas en version 1.0.0."
     }
 
     Write-Host 'Audit courant public-release : OK'
-    Write-Host 'IMPORTANT : exécuter aussi un scanner de secrets sur tout l’historique Git avant de rendre le dépôt public.'
+    Write-Host "IMPORTANT : exécuter aussi un scanner de secrets sur tout l'historique Git avant de rendre le dépôt public."
 }
 finally {
     Pop-Location
