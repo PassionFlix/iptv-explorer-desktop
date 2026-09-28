@@ -12,15 +12,17 @@ Le projet suit le versionnement sémantique.
 - Onboarding fournisseur avec détection, test de connexion et sélection des catégories.
 - Navigation Live, Films et Séries.
 - Fiches VOD et Séries avec épisodes.
-- Index de recherche local par fournisseur.
+- Index de recherche local par fournisseur, avec construction automatique du premier index après l'ajout d'un fournisseur actif.
 - Lecteur natif libmpv intégré sans processus `mpv.exe` externe.
 - Lecture Live, VOD et épisodes.
+- Sélecteur d'épisodes dans le lecteur pour changer d'épisode sans fermer la fenêtre.
 - Sélection audio MULTi et sous-titres.
 - Volume, seek, pause/reprise et plein écran.
-- Téléchargement VOD et copie du lien média via le bridge C# sécurisé.
+- Téléchargement Films et épisodes avec progression, débit et annulation.
+- Copie du lien média via le bridge C# sécurisé.
 - Secrets fournisseur protégés par DPAPI CurrentUser.
 - Interface Windows finalisée avec branding et icônes dédiés.
-- Packaging Windows x64 portable et installateur.
+- Packaging Windows x64 portable et installateur avec mise à jour par-dessus une installation existante.
 
 ### Sécurité
 
