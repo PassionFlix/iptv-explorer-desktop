@@ -33,9 +33,14 @@ try {
 
     $legacyVersion = '0.2.0' + '-dev'
     $legacyVersionHits = git grep -n --fixed-strings $legacyVersion -- ':!docs/phase-*' 2>$null
-    if ($LASTEXITCODE -eq 0 -and $legacyVersionHits) {
+    $grepExitCode = $LASTEXITCODE
+    if ($grepExitCode -gt 1) {
+        throw "git grep a échoué avec le code $grepExitCode."
+    }
+    if ($grepExitCode -eq 0 -and $legacyVersionHits) {
         throw "Référence $legacyVersion encore présente :`n$legacyVersionHits"
     }
+    $global:LASTEXITCODE = 0
 
     [xml]$props = Get-Content -LiteralPath 'Directory.Build.props' -Raw
     if ([string]$props.Project.PropertyGroup.Version -ne '1.0.0') {
