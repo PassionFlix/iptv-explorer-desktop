@@ -15,6 +15,19 @@ public sealed class PlayerWindowManager(IPlayerService player) : IPlayerWindowMa
         return _dispatcher.InvokeAsync(() => ShowCoreAsync(cancellationToken), DispatcherPriority.Normal, cancellationToken).Task.Unwrap();
     }
 
+    public void ConfigureEpisodes(
+        PlayerSeriesContext? context,
+        Func<PlayerEpisodeOption, CancellationToken, Task>? selectionHandler)
+    {
+        if (_dispatcher.CheckAccess())
+        {
+            _window?.ConfigureEpisodes(context, selectionHandler);
+            return;
+        }
+
+        _dispatcher.BeginInvoke(() => _window?.ConfigureEpisodes(context, selectionHandler), DispatcherPriority.Normal);
+    }
+
     private async Task<nint> ShowCoreAsync(CancellationToken cancellationToken)
     {
         if (_window is null)
