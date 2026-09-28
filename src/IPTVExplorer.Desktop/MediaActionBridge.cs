@@ -148,10 +148,6 @@ public sealed class MediaActionBridge(
                     request.Headers.TryAddWithoutValidation(name, value);
             }
 
-            // Some Xtream-compatible media endpoints reject HttpClient's empty/default identity
-            // even though the exact same media URL works in a browser or libmpv. Keep provider-
-            // supplied headers authoritative, otherwise send a conservative browser-compatible
-            // user-agent for the binary media transfer.
             if (!request.Headers.Contains("User-Agent"))
                 request.Headers.TryAddWithoutValidation("User-Agent", ProviderHttpRegistration.MediaUserAgent);
             if (!request.Headers.Contains("Accept"))
@@ -169,9 +165,6 @@ public sealed class MediaActionBridge(
                 operation.Status = "running";
             }
 
-            // Keep the source and destination streams in their own scope so both are fully
-            // closed before the temporary file is renamed to the requested destination.
-            // On Windows, moving a FileShare.None file while its stream is still open fails.
             await using (var source = await response.Content.ReadAsStreamAsync(operation.Cancellation.Token))
             await using (var target = new FileStream(
                 operation.TemporaryPath,
@@ -205,7 +198,7 @@ public sealed class MediaActionBridge(
         }
         catch (Exception exception)
         {
-            logger.LogWarning("VOD download failed: {SafeError}", LogRedactor.Redact(exception.Message));
+            logger.LogWarning("Media download failed: {SafeError}", LogRedactor.Redact(exception.Message));
             lock (operation.Gate)
             {
                 operation.Status = "failed";
@@ -253,9 +246,18 @@ public sealed class MediaActionBridge(
             ?? throw new InvalidOperationException("Fournisseur introuvable.");
         if (!provider.Enabled) throw new InvalidOperationException("Fournisseur désactivé.");
 
+        var catalog = (input.MediaType ?? "vod").Trim().ToLowerInvariant() switch
+        {
+            "vod" => CatalogType.Vod,
+            "series" => CatalogType.Series,
+            _ => throw new InvalidOperationException("Type de média invalide.")
+        };
+        var playbackId = catalog == CatalogType.Series ? input.EpisodeId! : input.MediaId;
+        var seriesId = catalog == CatalogType.Series ? input.MediaId : null;
+
         var client = await clients.CreateAsync(provider, cancellationToken);
         return await client.ResolveMediaAsync(
-            new MediaRequest(CatalogType.Vod, input.MediaId, Extension: NormalizeExtension(input.Extension)),
+            new MediaRequest(catalog, playbackId, seriesId, NormalizeExtension(input.Extension)),
             cancellationToken);
     }
 
@@ -270,7 +272,15 @@ public sealed class MediaActionBridge(
     private static void Validate(MediaActionRequest input)
     {
         if (!ProviderKey.IsValid(input.ProviderKey)) throw new InvalidOperationException("Fournisseur invalide.");
-        if (string.IsNullOrWhiteSpace(input.MediaId) || input.MediaId.Length > 256)
+        ValidateOpaqueId(input.MediaId);
+        var type = (input.MediaType ?? "vod").Trim().ToLowerInvariant();
+        if (type is not ("vod" or "series")) throw new InvalidOperationException("Type de média invalide.");
+        if (type == "series") ValidateOpaqueId(input.EpisodeId);
+    }
+
+    private static void ValidateOpaqueId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 512 || Uri.TryCreate(value, UriKind.Absolute, out _))
             throw new InvalidOperationException("Média invalide.");
     }
 
@@ -304,7 +314,13 @@ public sealed class MediaActionBridge(
         return options;
     }
 
-    private sealed record MediaActionRequest(string ProviderKey, string MediaId, string? Extension = null, string? SuggestedName = null);
+    private sealed record MediaActionRequest(
+        string ProviderKey,
+        string MediaId,
+        string? MediaType = null,
+        string? EpisodeId = null,
+        string? Extension = null,
+        string? SuggestedName = null);
     private sealed record DownloadActionRequest(string DownloadId);
 
     private sealed class DownloadOperation(string id, string fileName, string destinationPath, string temporaryPath)
