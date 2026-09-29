@@ -9,6 +9,7 @@ public sealed record TrackListChangedEventArgs(IReadOnlyList<MediaTrack> Tracks)
 
 public interface IPlayerService : IAsyncDisposable
 {
+    event EventHandler? MediaLoaded;
     event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
     event EventHandler<PlayerPositionChangedEventArgs>? PositionChanged;
     event EventHandler<TrackListChangedEventArgs>? TrackListChanged;
@@ -30,6 +31,7 @@ public interface IPlayerService : IAsyncDisposable
 /// <summary>Phase-one fail-closed placeholder. It never launches an external process.</summary>
 public sealed class PlayerNotInstalledService : IPlayerService
 {
+    public event EventHandler? MediaLoaded;
     public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
     public event EventHandler<PlayerPositionChangedEventArgs>? PositionChanged;
     public event EventHandler<TrackListChangedEventArgs>? TrackListChanged;
@@ -54,6 +56,7 @@ public sealed class PlayerNotInstalledService : IPlayerService
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     // Keep explicit event raisers referenced so strict builds do not flag unused event backing fields.
+    internal void NotifyMediaLoaded() => MediaLoaded?.Invoke(this, EventArgs.Empty);
     internal void NotifyPosition(TimeSpan position) => PositionChanged?.Invoke(this, new(position, null));
     internal void NotifyTracks(IReadOnlyList<MediaTrack> tracks) => TrackListChanged?.Invoke(this, new(tracks));
 }

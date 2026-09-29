@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:IPTVExplorer.Desktop"
         Title="Lecteur — IPTV Explorer" Width="1200" Height="760" MinWidth="820" MinHeight="540"
         WindowStartupLocation="CenterOwner" Background="#05070A" Foreground="#F8FAFC"
-        FontFamily="Segoe UI" KeyDown="OnKeyDown" Closing="OnClosing">
+        FontFamily="Segoe UI" PreviewKeyDown="OnPreviewKeyDown" KeyDown="OnKeyDown" Closing="OnClosing">
   <Window.Resources>
     <Style x:Key="ControlButton" TargetType="Button">
       <Setter Property="Foreground" Value="#F8FAFC" />
@@ -273,7 +273,7 @@
             </StackPanel>
           </Border>
 
-          <Button Grid.Column="6" MinWidth="112" Style="{StaticResource ControlButton}" Click="OnFullscreen"
+          <Button x:Name="FullscreenButton" Grid.Column="6" MinWidth="112" Style="{StaticResource ControlButton}" Click="OnFullscreen"
                   ToolTip="Basculer le plein écran (F11)">Plein écran</Button>
         </Grid>
 

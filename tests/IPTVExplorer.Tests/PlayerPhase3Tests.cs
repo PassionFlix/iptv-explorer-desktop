@@ -35,7 +35,7 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
-    public async Task ResumeResolvesMediaAgainAndSeeksOnlyAfterPlaybackStarts()
+    public async Task ResumeMovieSeeksToStoredSecondsOnlyAfterMediaLoaded()
     {
         await using var database = await TestDatabase.CreateAsync();
         var secrets = new InMemorySecretStore();
@@ -54,7 +54,7 @@ public sealed class PlayerPhase3Tests
             null,
             "https://images.example.invalid/poster.jpg",
             "mkv",
-            TimeSpan.FromMinutes(18),
+            TimeSpan.FromSeconds(550),
             TimeSpan.FromMinutes(90),
             DateTimeOffset.UtcNow));
         var player = new RecordingPlayerService();
@@ -65,13 +65,77 @@ public sealed class PlayerPhase3Tests
 
         Assert.Null(player.SeekPosition);
         player.NotifyState(PlayerState.Playing);
-        Assert.Equal(TimeSpan.FromMinutes(18), player.SeekPosition);
+        Assert.Null(player.SeekPosition);
+        player.NotifyMediaLoaded();
+        Assert.Equal(TimeSpan.FromSeconds(550), player.SeekPosition);
+        Assert.Equal(550, player.SeekPosition?.TotalSeconds);
         Assert.Equal(1, player.PlayCalls);
         Assert.NotNull(player.Media);
         Assert.Contains("/movie/user-demo/password-demo/movie-42.mkv", player.Media.Uri.AbsoluteUri, StringComparison.Ordinal);
         var stored = JsonSerializer.Serialize(await history.GetAsync(provider.Key, CatalogType.Vod, "movie-42"));
         Assert.DoesNotContain("user-demo", stored, StringComparison.Ordinal);
         Assert.DoesNotContain("password-demo", stored, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OpenWithoutResumeNeverSeeksWhenMediaLoads()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var secrets = new InMemorySecretStore();
+        var secretReference = await secrets.PutAsync(new ProviderSecret("user-demo", "password-demo"));
+        var provider = await database.AddProviderAsync(ProviderType.Xtream, secretReference);
+        await database.Repository.SetEnabledAsync(provider.Key, true);
+        var player = new RecordingPlayerService();
+        var windows = new RecordingWindowManager((nint)5353);
+        var history = new PlaybackHistoryRepository(database.Connections);
+        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows);
+
+        await coordinator.OpenAsync(new MediaReference(provider.Key, CatalogType.Vod, "movie-43", Extension: "mp4"));
+        player.NotifyMediaLoaded();
+
+        Assert.Empty(player.SeekPositions);
+        Assert.Equal(0, player.PlayCalls);
+    }
+
+    [Fact]
+    public async Task ResumeEpisodeUsesItsOwnPositionAndEpisodeChangeDoesNotReuseIt()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var secrets = new InMemorySecretStore();
+        var secretReference = await secrets.PutAsync(new ProviderSecret("user-demo", "password-demo"));
+        var provider = await database.AddProviderAsync(ProviderType.Xtream, secretReference);
+        await database.Repository.SetEnabledAsync(provider.Key, true);
+        var history = new PlaybackHistoryRepository(database.Connections);
+        await history.UpsertAsync(new PlaybackProgress(
+            provider.Key,
+            CatalogType.Series,
+            "episode-501",
+            "series-301",
+            "Pilot",
+            "Fixture series",
+            1,
+            1,
+            "https://images.example.invalid/series.jpg",
+            "mkv",
+            TimeSpan.FromSeconds(125.5),
+            TimeSpan.FromMinutes(42),
+            DateTimeOffset.UtcNow));
+        var player = new RecordingPlayerService();
+        var windows = new RecordingWindowManager((nint)5454);
+        var http = new StubHttpClientFactory(new SeriesDetailsHandler());
+        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(http, secrets), history, player, windows);
+
+        await coordinator.ResumeAsync(provider.Key, CatalogType.Series, "episode-501");
+        player.NotifyMediaLoaded();
+
+        Assert.Equal([TimeSpan.FromSeconds(125.5)], player.SeekPositions);
+        Assert.Contains("/series/user-demo/password-demo/episode-501.mkv", player.Media?.Uri.AbsoluteUri, StringComparison.Ordinal);
+
+        await windows.SelectEpisodeAsync("episode-502");
+        player.NotifyMediaLoaded();
+
+        Assert.Equal([TimeSpan.FromSeconds(125.5)], player.SeekPositions);
+        Assert.Contains("/series/user-demo/password-demo/episode-502.mkv", player.Media?.Uri.AbsoluteUri, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -163,6 +227,29 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
+    public async Task FileLoadedIsTheOnlyInitialSignalThatMediaCanResume()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+        var sequence = new ConcurrentQueue<string>();
+        var playing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        player.MediaLoaded += (_, _) => sequence.Enqueue("loaded");
+        player.StateChanged += (_, value) =>
+        {
+            if (value.State != PlayerState.Playing) return;
+            sequence.Enqueue("playing");
+            playing.TrySetResult();
+        };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/private")), (nint)322);
+        api.Enqueue(new(MpvEventKind.PropertyChange, "pause", false));
+        api.Enqueue(new(MpvEventKind.FileLoaded));
+        await playing.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(["loaded", "playing"], sequence);
+    }
+
+    [Fact]
     public async Task FirstLoadWithoutHeadersUsesStructuredLoadFileWithoutPropertyWrite()
     {
         var api = new RecordingMpvApi();
@@ -249,6 +336,8 @@ public sealed class PlayerPhase3Tests
     {
         var api = new RecordingMpvApi();
         var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+        PlayerPositionChangedEventArgs? reportedSeek = null;
+        player.PositionChanged += (_, value) => reportedSeek = value;
         var signExtendedWindowHandle = unchecked((nint)(long)0xFFFFFFFF80000001);
         await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/private")), signExtendedWindowHandle);
 
@@ -267,6 +356,7 @@ public sealed class PlayerPhase3Tests
         Assert.Contains(("pause", "no"), api.Properties);
         Assert.Contains(("pause", "yes"), api.Properties);
         Assert.Contains(("time-pos", "12.5"), api.Properties);
+        Assert.Equal(TimeSpan.FromSeconds(12.5), reportedSeek?.Position);
         Assert.Contains(("volume", "73"), api.Properties);
         Assert.Contains(("aid", "4"), api.Properties);
         Assert.Contains(("vid", "2"), api.Properties);
@@ -282,7 +372,21 @@ public sealed class PlayerPhase3Tests
     private sealed class RecordingWindowManager(nint handle) : IPlayerWindowManager
     {
         public nint Handle { get; private set; }
+        public PlayerSeriesContext? SeriesContext { get; private set; }
+        public Func<PlayerEpisodeOption, CancellationToken, Task>? EpisodeSelectionHandler { get; private set; }
         public Task<nint> ShowAsync(CancellationToken cancellationToken = default) { Handle = handle; return Task.FromResult(handle); }
+        public void ConfigureEpisodes(PlayerSeriesContext? context, Func<PlayerEpisodeOption, CancellationToken, Task>? selectionHandler)
+        {
+            SeriesContext = context;
+            EpisodeSelectionHandler = selectionHandler;
+        }
+
+        public Task SelectEpisodeAsync(string id)
+        {
+            var episode = SeriesContext?.Episodes.Single(value => string.Equals(value.Id, id, StringComparison.Ordinal))
+                ?? throw new InvalidOperationException("Episode fixture not configured.");
+            return (EpisodeSelectionHandler ?? throw new InvalidOperationException("Episode fixture handler not configured."))(episode, CancellationToken.None);
+        }
     }
 
     private sealed class RecordingPlayerService : IPlayerService
@@ -290,7 +394,9 @@ public sealed class PlayerPhase3Tests
         public ResolvedMedia? Media { get; private set; }
         public nint RenderHostHandle { get; private set; }
         public TimeSpan? SeekPosition { get; private set; }
+        public List<TimeSpan> SeekPositions { get; } = [];
         public int PlayCalls { get; private set; }
+        public event EventHandler? MediaLoaded;
         public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
         public event EventHandler<PlayerPositionChangedEventArgs>? PositionChanged;
         public event EventHandler<TrackListChangedEventArgs>? TrackListChanged;
@@ -298,7 +404,7 @@ public sealed class PlayerPhase3Tests
         public void Play() => PlayCalls++;
         public void Pause() { }
         public void Stop() { }
-        public void Seek(TimeSpan position) => SeekPosition = position;
+        public void Seek(TimeSpan position) { SeekPosition = position; SeekPositions.Add(position); }
         public void SetVolume(double volume) { }
         public IReadOnlyList<MediaTrack> GetTracks() => [];
         public void SelectAudioTrack(long id) { }
@@ -308,6 +414,7 @@ public sealed class PlayerPhase3Tests
         public void SetFullscreen(bool fullscreen) { }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
+        internal void NotifyMediaLoaded() => MediaLoaded?.Invoke(this, EventArgs.Empty);
         internal void NotifyState(PlayerState state) => StateChanged?.Invoke(this, new(state));
         internal void NotifyPosition(TimeSpan position, TimeSpan? duration = null) => PositionChanged?.Invoke(this, new(position, duration));
         internal void NotifyTracks(IReadOnlyList<MediaTrack> tracks) => TrackListChanged?.Invoke(this, new(tracks));
@@ -350,4 +457,26 @@ public sealed class PlayerPhase3Tests
     }
 
     private sealed record LoadFileCall(string Uri, string? HttpHeaderFields);
+
+    private sealed class SeriesDetailsHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            const string json = """
+                {
+                  "info": { "name": "Fixture series", "cover": "https://images.example.invalid/series.jpg" },
+                  "episodes": {
+                    "1": [
+                      { "id": "episode-501", "episode_num": 1, "title": "Pilot", "container_extension": "mkv" },
+                      { "id": "episode-502", "episode_num": 2, "title": "Second", "container_extension": "mkv" }
+                    ]
+                  }
+                }
+                """;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
 }

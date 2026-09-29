@@ -9,14 +9,11 @@ namespace IPTVExplorer.Desktop;
 public partial class PlayerWindow : Window
 {
     private readonly IPlayerService _player;
+    private readonly TrueFullscreenBehavior _fullscreenBehavior;
     private readonly TaskCompletionSource<nint> _renderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _seeking;
     private bool _updatingTracks;
     private bool _updatingEpisodes;
-    private bool _fullscreen;
-    private WindowStyle _savedStyle;
-    private ResizeMode _savedResizeMode;
-    private WindowState _savedState;
     private PlayerState _state = PlayerState.Idle;
     private Func<PlayerEpisodeOption, CancellationToken, Task>? _episodeSelectionHandler;
     private CancellationTokenSource? _episodeSelectionCancellation;
@@ -25,6 +22,7 @@ public partial class PlayerWindow : Window
     {
         _player = player;
         InitializeComponent();
+        _fullscreenBehavior = new(this);
         VideoHost.HandleReady += OnHandleReady;
         _player.StateChanged += OnStateChanged;
         _player.PositionChanged += OnPositionChanged;
@@ -173,33 +171,25 @@ public partial class PlayerWindow : Window
         if (choice.Id is long id) _player.SelectSubtitleTrack(id); else _player.SetSubtitleEnabled(false);
     }
 
-    private void OnFullscreen(object sender, RoutedEventArgs e) => SetFullscreen(!_fullscreen);
+    private void OnFullscreen(object sender, RoutedEventArgs e) => SetFullscreen(!_fullscreenBehavior.IsFullscreen);
 
     private void SetFullscreen(bool fullscreen)
     {
-        if (_fullscreen == fullscreen) return;
-        if (fullscreen)
+        if (_fullscreenBehavior.IsFullscreen == fullscreen) return;
+        var changed = fullscreen ? _fullscreenBehavior.Enter() : _fullscreenBehavior.Exit();
+        if (!changed)
         {
-            _savedStyle = WindowStyle;
-            _savedResizeMode = ResizeMode;
-            _savedState = WindowState;
-            WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
-            WindowState = WindowState.Maximized;
+            StatusText.Text = fullscreen ? "Impossible d’activer le plein écran" : "Impossible de quitter le plein écran";
+            return;
         }
-        else
-        {
-            WindowStyle = _savedStyle;
-            ResizeMode = _savedResizeMode;
-            WindowState = _savedState;
-        }
-        _fullscreen = fullscreen;
+
+        FullscreenButton.Content = fullscreen ? "Quitter le plein écran" : "Plein écran";
         _player.SetFullscreen(fullscreen);
     }
 
-    private void OnKeyDown(object sender, KeyEventArgs e)
+    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && _fullscreen)
+        if (e.Key == Key.Escape && _fullscreenBehavior.IsFullscreen)
         {
             SetFullscreen(false);
             e.Handled = true;
@@ -208,11 +198,13 @@ public partial class PlayerWindow : Window
 
         if (e.Key == Key.F11)
         {
-            SetFullscreen(!_fullscreen);
+            SetFullscreen(!_fullscreenBehavior.IsFullscreen);
             e.Handled = true;
-            return;
         }
+    }
 
+    private void OnKeyDown(object sender, KeyEventArgs e)
+    {
         if (e.Key == Key.Space && Keyboard.FocusedElement is not System.Windows.Controls.ComboBox)
         {
             TogglePlayPause();

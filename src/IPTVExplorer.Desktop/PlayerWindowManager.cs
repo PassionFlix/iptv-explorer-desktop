@@ -33,7 +33,6 @@ public sealed class PlayerWindowManager(IPlayerService player) : IPlayerWindowMa
         if (_window is null)
         {
             _window = new PlayerWindow(player);
-            TrueFullscreenBehavior.Attach(_window);
             if (Application.Current.MainWindow is { } owner && owner != _window)
             {
                 _window.Owner = owner;

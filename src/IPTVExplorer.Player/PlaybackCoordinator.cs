@@ -54,6 +54,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         _player = player;
         _windows = windows;
         _recorder = new PlaybackProgressRecorder(history);
+        _player.MediaLoaded += OnMediaLoaded;
         _player.PositionChanged += OnPositionChanged;
         _player.StateChanged += OnStateChanged;
     }
@@ -105,13 +106,12 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         var client = await _clients.CreateAsync(provider, cancellationToken);
         var progress = storedProgress ?? CreateProgress(reference);
         await _recorder.BeginAsync(progress, cancellationToken);
-        lock (_resumeLock) _pendingResumePosition = resumePosition is { } position && position > TimeSpan.Zero ? position : null;
-
         try
         {
             var playbackId = reference.EpisodeId ?? reference.MediaId;
             var request = new MediaRequest(reference.MediaType, playbackId, reference.MediaType == CatalogType.Series ? reference.MediaId : null, reference.Extension);
             var resolved = await client.ResolveMediaAsync(request, cancellationToken);
+            lock (_resumeLock) _pendingResumePosition = resumePosition is { } position && position > TimeSpan.Zero ? position : null;
             await _player.LoadAsync(resolved, renderHostHandle, cancellationToken);
 
             if (reference.MediaType == CatalogType.Series && reference.EpisodeId is not null)
@@ -216,7 +216,10 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
     private void OnStateChanged(object? sender, PlayerStateChangedEventArgs value)
     {
         _ = _recorder.RecordStateAsync(value.State);
-        if (value.State != PlayerState.Playing) return;
+    }
+
+    private void OnMediaLoaded(object? sender, EventArgs value)
+    {
         TimeSpan? resume;
         lock (_resumeLock)
         {
@@ -275,6 +278,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _player.MediaLoaded -= OnMediaLoaded;
         _player.PositionChanged -= OnPositionChanged;
         _player.StateChanged -= OnStateChanged;
         await _recorder.DisposeAsync();
