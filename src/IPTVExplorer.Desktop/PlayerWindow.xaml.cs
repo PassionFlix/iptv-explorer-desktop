@@ -16,6 +16,7 @@ public partial class PlayerWindow : Window
     private readonly Brush _windowedControlsBackground;
     private readonly TaskCompletionSource<nint> _renderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _seeking;
+    private bool _softStopped;
     private bool _updatingTracks;
     private bool _updatingEpisodes;
     private PlayerState _state = PlayerState.Idle;
@@ -78,9 +79,11 @@ public partial class PlayerWindow : Window
 
     private void OnStateChanged(object? sender, PlayerStateChangedEventArgs e) => Dispatcher.BeginInvoke(() =>
     {
-        _state = e.State;
-        PlayPauseButton.Content = e.State == PlayerState.Paused ? "Lire" : "Pause";
-        StatusText.Text = e.SafeMessage ?? e.State switch
+        if (e.State is PlayerState.Loading or PlayerState.Playing) _softStopped = false;
+        var displayState = _softStopped && e.State == PlayerState.Paused ? PlayerState.Stopped : e.State;
+        _state = displayState;
+        PlayPauseButton.Content = displayState is PlayerState.Paused or PlayerState.Stopped ? "Lecture" : "Pause";
+        StatusText.Text = e.SafeMessage ?? displayState switch
         {
             PlayerState.Loading => "Chargement…",
             PlayerState.Playing => "Lecture",
@@ -127,10 +130,29 @@ public partial class PlayerWindow : Window
 
     private void TogglePlayPause()
     {
-        if (_state == PlayerState.Paused) _player.Play(); else _player.Pause();
+        if (_state is PlayerState.Paused or PlayerState.Stopped)
+        {
+            _softStopped = false;
+            _player.Play();
+        }
+        else
+        {
+            _player.Pause();
+        }
     }
 
-    private void OnStop(object sender, RoutedEventArgs e) => _player.Stop();
+    private void OnStop(object sender, RoutedEventArgs e)
+    {
+        if (_state is PlayerState.Idle or PlayerState.Error) return;
+        _softStopped = true;
+        _player.Pause();
+        _player.Seek(TimeSpan.Zero);
+        _state = PlayerState.Stopped;
+        PlayPauseButton.Content = "Lecture";
+        StatusText.Text = "Arrêté";
+        ShowFullscreenControls();
+    }
+
     private void OnSeekStarted(object sender, MouseButtonEventArgs e) { _seeking = true; ShowFullscreenControls(); }
     private void OnSeekCompleted(object sender, MouseButtonEventArgs e)
     {
