@@ -186,7 +186,7 @@ public sealed class IndexRebuildWorker(
                         ? await client.GetVodPageAsync(category.RemoteId, page, cancellationToken)
                         : await client.GetSeriesPageAsync(category.RemoteId, page, cancellationToken);
                     if (page == 1) estimatedTotal += result.Total;
-                    documents.AddRange(result.Items.Select(item => new SearchHit(provider.Key, catalog, item.Id, item.Title, item.ImageUrl)));
+                    documents.AddRange(result.Items.Select(item => new SearchHit(provider.Key, catalog, item.Id, item.Title, item.ImageUrl, item.AddedAt)));
                     if (catalog == CatalogType.Vod) vod += result.Items.Count; else series += result.Items.Count;
                     await jobs.ReportAsync(job.Id, documents.Count, Math.Max(documents.Count, estimatedTotal), $"{catalog} — category {categoryNumber}/{totalCategories}", vod, series, cancellationToken);
                     if (result.Items.Count == 0 || page >= result.TotalPages) break;

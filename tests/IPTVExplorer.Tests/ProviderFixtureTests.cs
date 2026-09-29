@@ -28,6 +28,7 @@ public sealed class ProviderFixtureTests
         var vod = await client.GetVodPageAsync("20", 1);
         Assert.Equal(2, vod.Total);
         Assert.Equal(8.4, vod.Items[0].Rating);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000), vod.Items[0].AddedAt);
         var detail = await client.GetVodDetailsAsync("201");
         Assert.Equal("Fixture Film", detail.Title);
         Assert.Equal("Fixture Director", detail.Director);
@@ -461,7 +462,7 @@ public sealed class ProviderFixtureTests
                 "get_vod_categories" => "[{\"category_id\":\"20\",\"category_name\":\"Films Fixture\"}]",
                 "get_series_categories" => "[{\"category_id\":\"30\",\"category_name\":\"Series Fixture\"}]",
                 "get_live_streams" => "[{\"stream_id\":101,\"name\":\"Fixture Channel\",\"stream_icon\":\"https://images.example.invalid/live.png\"}]",
-                "get_vod_streams" => "[{\"stream_id\":201,\"name\":\"Fixture Film\",\"year\":\"2026\",\"rating\":\"8.4\",\"container_extension\":\"mkv\",\"audio_tracks\":[\"fra\",\"eng\"]},{\"stream_id\":202,\"name\":\"Second Fixture\"}]",
+                "get_vod_streams" => "[{\"stream_id\":201,\"name\":\"Fixture Film\",\"year\":\"2026\",\"rating\":\"8.4\",\"added\":\"1700000000\",\"container_extension\":\"mkv\",\"audio_tracks\":[\"fra\",\"eng\"]},{\"stream_id\":202,\"name\":\"Second Fixture\"}]",
                 "get_series" => "[{\"series_id\":301,\"name\":\"Fixture Series\",\"rating\":\"7.9\"}]",
                 "get_vod_info" => "{\"movie_data\":{\"stream_id\":201,\"name\":\"Fixture Film\",\"container_extension\":\"mkv\"},\"info\":{\"plot\":\"Fixture plot\",\"director\":\"Fixture Director\",\"cast\":\"Actor One\",\"genre\":\"Drama\",\"year\":\"2026\",\"rating\":\"8.4\"}}",
                 "get_series_info" => "{\"info\":{\"name\":\"Fixture Series\",\"plot\":\"Series plot\"},\"episodes\":{\"1\":[{\"id\":\"episode-501\",\"episode_num\":1,\"title\":\"Pilot\",\"container_extension\":\"mkv\"}]}}",

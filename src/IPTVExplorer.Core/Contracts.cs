@@ -48,6 +48,15 @@ public interface IProviderClientFactory
 public interface ISearchService
 {
     Task<CatalogPage<SearchHit>> SearchAsync(string? providerKey, CatalogType catalog, string query, int page, int pageSize, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SearchHit>> RecentlyAddedAsync(string providerKey, int limit, CancellationToken cancellationToken = default);
+}
+
+public interface IPlaybackHistoryRepository
+{
+    Task<PlaybackProgress?> GetAsync(string providerKey, CatalogType catalog, string mediaId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PlaybackProgress>> ListInProgressAsync(string providerKey, int limit, CancellationToken cancellationToken = default);
+    Task UpsertAsync(PlaybackProgress progress, CancellationToken cancellationToken = default);
+    Task DeleteAsync(string providerKey, CatalogType catalog, string mediaId, CancellationToken cancellationToken = default);
 }
 
 public interface IAppSettingsRepository

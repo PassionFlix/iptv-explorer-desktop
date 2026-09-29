@@ -47,6 +47,8 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             _playbackActive = false;
             _pausedForCache = false;
             _trackChangeResumeUntilUtc = DateTime.MinValue;
+            _position = TimeSpan.Zero;
+            _duration = null;
         }
 
         RaiseState(PlayerState.Loading);

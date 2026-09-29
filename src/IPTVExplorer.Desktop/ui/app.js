@@ -62,7 +62,7 @@
 
   const titles = { home: 'Accueil', live: 'Live', vod: 'Films', series: 'Séries', search: 'Recherche', settings: 'Paramètres' };
   function navigate(page) {
-    cancelGroup('view'); cancelGroup('detail');
+    cancelGroup('view'); cancelGroup('detail'); cancelGroup('home-content');
     state.page = page;
     $$('.nav,.page').forEach(element => element.classList.remove('active'));
     $(`.nav[data-page="${page}"]`).classList.add('active');
@@ -96,6 +96,7 @@
 
   async function renderHome() {
     const zero = $('#zero-state'), dashboard = $('#dashboard');
+    renderHomeMedia({ continueWatching: [], recentlyAdded: [] });
     if (!state.app || state.app.providerCount === 0) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); return; }
     if (!state.activeProviderKey) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); zero.querySelector('h2').textContent = 'Aucun fournisseur actif'; zero.querySelector('p').textContent = 'Activez un fournisseur depuis Paramètres → Fournisseurs.'; return; }
     zero.classList.add('hidden'); dashboard.classList.remove('hidden');
@@ -104,6 +105,9 @@
     $('#dashboard-meta').textContent = provider.type.toUpperCase();
     $('#dashboard-status').className = 'status neutral';
     $('#dashboard-status').textContent = 'Vérification…';
+    rpc('home.content', { providerKey: provider.key }, 'home-content')
+      .then(renderHomeMedia)
+      .catch(error => { if (!isAbort(error)) console.warn('Home media sections unavailable.'); });
     try {
       const data = await rpc('providers.dashboard', { providerKey: provider.key }, 'view');
       $('#dashboard-status').className = `status ${data.available ? 'success' : 'error'}`; $('#dashboard-status').textContent = data.available ? 'Disponible' : 'Indisponible';
@@ -113,6 +117,55 @@
         state.indexTimer = window.setTimeout(pollIndex, 1200);
       }
     } catch (error) { if (!isAbort(error)) toast(error.message, true); }
+  }
+
+  function renderHomeMedia(data) {
+    renderContinueWatching(data?.continueWatching || []);
+    renderRecentlyAdded(data?.recentlyAdded || []);
+  }
+
+  function renderContinueWatching(items) {
+    const section = $('#continue-watching'), grid = $('#continue-watching-items');
+    grid.replaceChildren();
+    section.classList.toggle('hidden', items.length === 0);
+    for (const item of items) {
+      const card = node('button', 'home-media-card'); card.type = 'button';
+      const visual = imageOrPlaceholder(item.posterUrl, item.title, 'home-media-poster');
+      if (item.durationSeconds > 0) {
+        const progress = node('span', 'home-media-progress');
+        const fill = node('i'); fill.style.width = `${Math.min(100, Math.max(0, item.percentage || 0))}%`;
+        progress.append(fill); visual.append(progress);
+      }
+      const copy = node('span', 'home-media-copy');
+      copy.append(node('strong', '', item.title));
+      if (item.catalog === 'series') {
+        const code = item.season && item.episode ? `S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}` : item.episodeTitle || 'Épisode';
+        copy.append(node('small', '', code));
+      }
+      copy.append(node('span', 'home-media-action', item.durationSeconds > 0 ? `${item.percentage} % · Reprendre` : 'Reprendre'));
+      card.append(visual, copy);
+      card.addEventListener('click', async () => {
+        try { await rpc('player.resume', { providerKey: item.providerKey, catalogType: item.catalog, mediaId: item.mediaId }, 'player'); }
+        catch (error) { if (!isAbort(error)) toast(error.message, true); }
+      });
+      grid.append(card);
+    }
+  }
+
+  function renderRecentlyAdded(items) {
+    const section = $('#recently-added'), grid = $('#recently-added-items');
+    grid.replaceChildren();
+    section.classList.toggle('hidden', items.length === 0);
+    for (const item of items) {
+      const card = node('button', 'home-media-card'); card.type = 'button';
+      card.append(imageOrPlaceholder(item.imageUrl, item.title, 'home-media-poster'));
+      const copy = node('span', 'home-media-copy');
+      copy.append(node('strong', '', item.title), node('small', '', item.catalog === 'series' ? 'Série' : 'Film'));
+      card.append(copy);
+      const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: item.catalog, mediaId: item.id });
+      card.addEventListener('click', () => openDetail(item.catalog, { id: item.id, title: item.title, imageUrl: item.imageUrl }, reference));
+      grid.append(card);
+    }
   }
 
   async function loadCatalogShell(catalog) {
@@ -182,7 +235,7 @@
       const copy = node('div'); const metadata = node('div', 'metadata'); [detail.year, detail.genre, detail.duration, detail.rating ? `★ ${detail.rating}` : null].filter(Boolean).forEach(value => metadata.append(node('span', '', String(value))));
       copy.append(metadata, node('p', 'plot', detail.plot || 'Aucun résumé communiqué.'));
       if (detail.director) copy.append(node('p', 'muted', `Réalisation : ${detail.director}`)); if (detail.cast) copy.append(node('p', 'muted', `Distribution : ${detail.cast}`));
-      if (catalog === 'vod') copy.append(button('▶ Lire', 'primary', () => openPlayer({ ...reference, mediaId: detail.id, extension: detail.extension }, detail.title)));
+      if (catalog === 'vod') copy.append(button('▶ Lire', 'primary', () => openPlayer({ ...reference, mediaId: detail.id, extension: detail.extension, title: detail.title, posterUrl: detail.poster }, detail.title)));
       layout.append(copy); content.append(layout);
       if (catalog === 'series') renderSeasons(content, detail, reference.providerKey);
     } catch (error) { if (!isAbort(error)) content.replaceChildren(node('p', 'form-error', error.message)); }
@@ -196,7 +249,7 @@
       const list = node('div', 'episode-list');
       season.episodes.forEach(episode => {
         const row = node('div', 'episode'); const number = episode.episode ? `E${String(episode.episode).padStart(2, '0')} — ` : '';
-        row.append(node('span', '', `${number}${episode.title}`), button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension }, episode.title))); list.append(row);
+        row.append(node('span', '', `${number}${episode.title}`), button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension, title: episode.title, posterUrl: detail.poster, seriesTitle: detail.title, season: episode.season ?? season.number, episode: episode.episode }, episode.title))); list.append(row);
       });
       block.append(list); section.append(block);
     });

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Text.Json;
 using IPTVExplorer.Core;
 
@@ -148,7 +149,25 @@ internal static class JsonSupport
         var extension = item.Text("container_extension");
         var year = item.Text("year", "releaseDate", "releasedate");
         double? rating = double.TryParse(item.Text("rating", "rating_5based", "kinopoisk_rating"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedRating) ? parsedRating : null;
-        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating);
+        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, ParseAddedAt(item.Text("added", "added_at", "created_at")));
+    }
+
+    private static DateTimeOffset? ParseAddedAt(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        DateTimeOffset parsed;
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var epoch))
+        {
+            try { parsed = epoch > 10_000_000_000 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch) : DateTimeOffset.FromUnixTimeSeconds(epoch); }
+            catch (ArgumentOutOfRangeException) { return null; }
+        }
+        else if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out parsed))
+        {
+            return null;
+        }
+
+        var utc = parsed.ToUniversalTime();
+        return utc.Year >= 2000 && utc <= DateTimeOffset.UtcNow.AddDays(1) ? utc : null;
     }
 
     private static string InfrastructureCompatibleNormalize(string value)

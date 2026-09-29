@@ -430,3 +430,124 @@
     flex-wrap: wrap;
   }
 }
+
+.home-media-section {
+  margin-top: 22px;
+}
+
+.home-media-heading {
+  margin-bottom: 11px;
+}
+
+.home-media-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.home-media-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.home-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
+  gap: 14px;
+}
+
+.home-media-card {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, transform .18s ease, background .18s ease;
+}
+
+.home-media-card:hover,
+.home-media-card:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
+  background: var(--panel2);
+  transform: translateY(-2px);
+}
+
+.home-media-poster {
+  position: relative;
+  display: grid;
+  aspect-ratio: 2 / 3;
+  place-items: center;
+  overflow: hidden;
+  background: linear-gradient(145deg, var(--panel2), var(--bg));
+  color: var(--muted);
+  font-size: 28px;
+}
+
+.home-media-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home-media-progress {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(4 12 25 / 78%);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 12%);
+}
+
+.home-media-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+
+.home-media-copy {
+  display: grid;
+  gap: 4px;
+  padding: 10px 11px 11px;
+}
+
+.home-media-copy strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-media-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-media-action {
+  color: var(--accent2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .home-media-grid {
+    grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    gap: 10px;
+  }
+}
+
+@media (max-width: 500px) {
+  .home-media-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

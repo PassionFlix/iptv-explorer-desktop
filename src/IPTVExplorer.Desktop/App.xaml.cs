@@ -36,6 +36,8 @@ public partial class App : Application
             builder.Services.AddSingleton<RebuildJobRepository>();
             builder.Services.AddSingleton<AtomicSearchIndex>();
             builder.Services.AddSingleton<ISearchService, SearchService>();
+            builder.Services.AddSingleton<PlaybackHistoryRepository>();
+            builder.Services.AddSingleton<IPlaybackHistoryRepository>(sp => sp.GetRequiredService<PlaybackHistoryRepository>());
             builder.Services.AddSingleton<IProviderClientFactory, ProviderClientFactory>();
             builder.Services.AddSingleton<ProviderOnboardingService>();
             builder.Services.AddSingleton<ProviderManagementService>();
@@ -75,8 +77,10 @@ public partial class App : Application
     {
         if (_host is not null)
         {
+            await _host.Services.GetRequiredService<PlaybackCoordinator>().FlushAsync();
             await _host.StopAsync(TimeSpan.FromSeconds(5));
-            _host.Dispose();
+            if (_host is IAsyncDisposable asyncHost) await asyncHost.DisposeAsync();
+            else _host.Dispose();
         }
         base.OnExit(e);
     }

@@ -17,6 +17,7 @@ public sealed class BridgeRouter(
     IAppSettingsRepository settings,
     RebuildJobRepository jobs,
     ISearchService search,
+    IPlaybackHistoryRepository playbackHistory,
     PlaybackCoordinator playback,
     AppPaths paths,
     ILogger<BridgeRouter> logger)
@@ -91,7 +92,9 @@ public sealed class BridgeRouter(
         "index.queue" => await QueueIndex(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "index.status" => await IndexStatus(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "search.query" => await Search(Require<SearchRequest>(request), cancellationToken),
+        "home.content" => await HomeContent(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "player.open" => await playback.OpenAsync(Require<MediaReference>(request), cancellationToken),
+        "player.resume" => await ResumePlayback(Require<ResumeRequest>(request), cancellationToken),
         _ => throw new NotSupportedException("Unknown bridge method.")
     };
 
@@ -246,6 +249,53 @@ public sealed class BridgeRouter(
         var catalog = ParseCatalog(input.CatalogType); return await search.SearchAsync(input.ProviderKey, catalog, input.Query.Trim(), Math.Clamp(input.Page, 1, 100000), Math.Clamp(input.PageSize, 1, 100), cancellationToken);
     }
 
+    private async Task<object> HomeContent(string providerKey, CancellationToken cancellationToken)
+    {
+        var provider = await RequiredProvider(providerKey, cancellationToken);
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var preferences = await settings.GetAsync(cancellationToken);
+        if (!string.Equals(preferences.ActiveProviderKey, providerKey, StringComparison.Ordinal)) throw new InvalidOperationException("The requested provider is not active.");
+
+        var inProgress = await playbackHistory.ListInProgressAsync(providerKey, 6, cancellationToken);
+        var recent = provider.Type == ProviderType.Xtream
+            ? await search.RecentlyAddedAsync(providerKey, 12, cancellationToken)
+            : [];
+        return new
+        {
+            continueWatching = inProgress.Select(progress => new
+            {
+                providerKey = progress.ProviderKey,
+                catalog = progress.Catalog.ToString().ToLowerInvariant(),
+                mediaId = progress.MediaId,
+                title = progress.Catalog == CatalogType.Series ? progress.SeriesTitle ?? progress.Title : progress.Title,
+                episodeTitle = progress.Catalog == CatalogType.Series ? progress.Title : null,
+                progress.Season,
+                progress.Episode,
+                posterUrl = SafeImage(progress.PosterUrl),
+                positionSeconds = progress.Position.TotalSeconds,
+                durationSeconds = progress.Duration?.TotalSeconds,
+                percentage = PlaybackProgressPolicy.Percentage(progress.Position, progress.Duration),
+                updatedAt = progress.UpdatedAt
+            }),
+            recentlyAdded = recent.Select(item => new
+            {
+                catalog = item.Catalog.ToString().ToLowerInvariant(),
+                id = item.RemoteId,
+                item.Title,
+                imageUrl = SafeImage(item.ImageUrl),
+                addedAt = item.AddedAt
+            }),
+            recentSupported = provider.Type == ProviderType.Xtream
+        };
+    }
+
+    private async Task<object> ResumePlayback(ResumeRequest input, CancellationToken cancellationToken)
+    {
+        var preferences = await settings.GetAsync(cancellationToken);
+        if (!string.Equals(preferences.ActiveProviderKey, input.ProviderKey, StringComparison.Ordinal)) throw new InvalidOperationException("Activez le fournisseur associé avant de reprendre ce contenu.");
+        return await playback.ResumeAsync(input.ProviderKey, ParseCatalog(input.CatalogType), input.MediaId, cancellationToken);
+    }
+
     private async Task<IProviderClient> EnabledClient(string providerKey, CancellationToken cancellationToken)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken); if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled."); return await clients.CreateAsync(provider, cancellationToken);
@@ -258,7 +308,7 @@ public sealed class BridgeRouter(
     private static string? SafeImage(string? value)
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo)) return null;
-        var sensitive = uri.Query.Contains("token=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("password=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("username=", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/movie/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/series/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/live/", StringComparison.OrdinalIgnoreCase);
+        var sensitive = uri.Query.Contains("token=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("password=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("username=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("mac=", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/movie/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/series/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/live/", StringComparison.OrdinalIgnoreCase);
         return sensitive ? null : uri.ToString();
     }
     private static CatalogType ParseCatalog(string value) => Enum.TryParse<CatalogType>(value, true, out var catalog) ? catalog : throw new ArgumentException("Invalid catalog type.");
@@ -291,4 +341,5 @@ public sealed class BridgeRouter(
     private sealed record PagedCatalogRequest(string ProviderKey, string CategoryId, int Page);
     private sealed record DetailRequest(string ProviderKey, string MediaId);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
+    private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
 }

@@ -111,11 +111,18 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
             catalog_type TEXT NOT NULL,
             media_id TEXT NOT NULL,
             series_id TEXT,
+            title TEXT NOT NULL DEFAULT '',
+            series_title TEXT,
+            season_number INTEGER,
+            episode_number INTEGER,
+            poster_url TEXT,
+            extension TEXT,
             position_seconds REAL NOT NULL DEFAULT 0,
             duration_seconds REAL,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(provider_key,catalog_type,media_id)
         );
+        CREATE INDEX IF NOT EXISTS ix_playback_history_provider_updated ON playback_history(provider_key,updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS playback_preferences (
             provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
@@ -152,6 +159,27 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureColumnAsync(connection, "provider_categories", "technical", "INTEGER NOT NULL DEFAULT 0 CHECK (technical IN (0,1))", cancellationToken);
         await using var version = connection.CreateCommand(); version.CommandText = "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,strftime('%Y-%m-%dT%H:%M:%fZ','now'))"; await version.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "title", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "series_title", "TEXT", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "season_number", "INTEGER", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "episode_number", "INTEGER", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "poster_url", "TEXT", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "extension", "TEXT", cancellationToken);
+        await using (var historyIndex = connection.CreateCommand())
+        {
+            historyIndex.CommandText = "CREATE INDEX IF NOT EXISTS ix_playback_history_provider_updated ON playback_history(provider_key,updated_at DESC)";
+            await historyIndex.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var playbackVersion = connection.CreateCommand())
+        {
+            playbackVersion.CommandText = "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(3,strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+            if (await playbackVersion.ExecuteNonQueryAsync(cancellationToken) == 1)
+            {
+                await using var invalidateIndexes = connection.CreateCommand();
+                invalidateIndexes.CommandText = "UPDATE provider_category_policy SET index_dirty=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE catalog_type IN ('vod','series')";
+                await invalidateIndexes.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
     }
 
     private static async Task EnsureColumnAsync(SqliteConnection connection, string table, string column, string declaration, CancellationToken cancellationToken)

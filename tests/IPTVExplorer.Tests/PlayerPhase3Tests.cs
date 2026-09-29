@@ -19,7 +19,8 @@ public sealed class PlayerPhase3Tests
         await database.Repository.SetEnabledAsync(provider.Key, true);
         var player = new RecordingPlayerService();
         var windows = new RecordingWindowManager((nint)4242);
-        var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), player, windows);
+        var history = new PlaybackHistoryRepository(database.Connections);
+        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows);
 
         var result = await coordinator.OpenAsync(new MediaReference(provider.Key, CatalogType.Vod, "movie-42", Extension: "mkv"));
 
@@ -31,6 +32,46 @@ public sealed class PlayerPhase3Tests
         Assert.DoesNotContain("user-demo", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("password-demo", serialized, StringComparison.Ordinal);
         Assert.Equal("opened", result.State);
+    }
+
+    [Fact]
+    public async Task ResumeResolvesMediaAgainAndSeeksOnlyAfterPlaybackStarts()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var secrets = new InMemorySecretStore();
+        var secretReference = await secrets.PutAsync(new ProviderSecret("user-demo", "password-demo"));
+        var provider = await database.AddProviderAsync(ProviderType.Xtream, secretReference);
+        await database.Repository.SetEnabledAsync(provider.Key, true);
+        var history = new PlaybackHistoryRepository(database.Connections);
+        await history.UpsertAsync(new PlaybackProgress(
+            provider.Key,
+            CatalogType.Vod,
+            "movie-42",
+            null,
+            "Fixture film",
+            null,
+            null,
+            null,
+            "https://images.example.invalid/poster.jpg",
+            "mkv",
+            TimeSpan.FromMinutes(18),
+            TimeSpan.FromMinutes(90),
+            DateTimeOffset.UtcNow));
+        var player = new RecordingPlayerService();
+        var windows = new RecordingWindowManager((nint)5252);
+        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows);
+
+        await coordinator.ResumeAsync(provider.Key, CatalogType.Vod, "movie-42");
+
+        Assert.Null(player.SeekPosition);
+        player.NotifyState(PlayerState.Playing);
+        Assert.Equal(TimeSpan.FromMinutes(18), player.SeekPosition);
+        Assert.Equal(1, player.PlayCalls);
+        Assert.NotNull(player.Media);
+        Assert.Contains("/movie/user-demo/password-demo/movie-42.mkv", player.Media.Uri.AbsoluteUri, StringComparison.Ordinal);
+        var stored = JsonSerializer.Serialize(await history.GetAsync(provider.Key, CatalogType.Vod, "movie-42"));
+        Assert.DoesNotContain("user-demo", stored, StringComparison.Ordinal);
+        Assert.DoesNotContain("password-demo", stored, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -229,14 +270,16 @@ public sealed class PlayerPhase3Tests
     {
         public ResolvedMedia? Media { get; private set; }
         public nint RenderHostHandle { get; private set; }
+        public TimeSpan? SeekPosition { get; private set; }
+        public int PlayCalls { get; private set; }
         public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
         public event EventHandler<PlayerPositionChangedEventArgs>? PositionChanged;
         public event EventHandler<TrackListChangedEventArgs>? TrackListChanged;
         public Task LoadAsync(ResolvedMedia media, nint renderHostHandle, CancellationToken cancellationToken = default) { Media = media; RenderHostHandle = renderHostHandle; return Task.CompletedTask; }
-        public void Play() { }
+        public void Play() => PlayCalls++;
         public void Pause() { }
         public void Stop() { }
-        public void Seek(TimeSpan position) { }
+        public void Seek(TimeSpan position) => SeekPosition = position;
         public void SetVolume(double volume) { }
         public IReadOnlyList<MediaTrack> GetTracks() => [];
         public void SelectAudioTrack(long id) { }
@@ -247,7 +290,7 @@ public sealed class PlayerPhase3Tests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         internal void NotifyState(PlayerState state) => StateChanged?.Invoke(this, new(state));
-        internal void NotifyPosition(TimeSpan position) => PositionChanged?.Invoke(this, new(position, null));
+        internal void NotifyPosition(TimeSpan position, TimeSpan? duration = null) => PositionChanged?.Invoke(this, new(position, duration));
         internal void NotifyTracks(IReadOnlyList<MediaTrack> tracks) => TrackListChanged?.Invoke(this, new(tracks));
     }
 
