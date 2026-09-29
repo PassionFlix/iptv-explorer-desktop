@@ -30,8 +30,47 @@
       <div id="toast" role="status" aria-live="polite"></div>
 
       <section id="home" class="page active">
+        <div id="update-banner" class="update-banner" role="status" aria-live="polite">
+          <div>
+            <strong id="update-title">Mise à jour disponible</strong>
+            <small id="update-message">Une nouvelle version stable est disponible.</small>
+          </div>
+          <div class="update-banner-actions">
+            <button type="button" class="primary" id="update-download">Télécharger</button>
+            <button type="button" class="secondary" id="update-later">Plus tard</button>
+          </div>
+        </div>
         <div id="zero-state" class="welcome"><div class="welcome-copy"><span class="pill">PREMIER DÉMARRAGE</span><h2>Bienvenue dans IPTV Explorer</h2><p>Aucun fournisseur IPTV configuré. Ajoutez votre premier fournisseur Xtream ou Stalker/MAG pour commencer.</p><button class="primary open-onboarding">＋ Ajouter un fournisseur</button></div><div class="orb" aria-hidden="true"><span>IE</span></div></div>
-        <div id="dashboard" class="hidden"><div class="dashboard-hero"><div><p class="eyebrow">FOURNISSEUR ACTIF</p><h2 id="dashboard-name">—</h2><p id="dashboard-meta" class="muted">—</p></div><span id="dashboard-status" class="status neutral">Vérification…</span></div><div id="dashboard-stats" class="stats"></div><div class="panel"><div class="panel-head"><div><p class="eyebrow">INDEX LOCAL</p><h3>Recherche Films & Séries</h3></div><button class="secondary" id="home-index">Construire l’index</button></div><div id="home-index-status" class="index-progress">Pas construit</div></div></div>
+        <div id="dashboard" class="home-dashboard hidden">
+          <article class="home-provider-card">
+            <div><p class="eyebrow">FOURNISSEUR ACTIF</p><h2 id="dashboard-name">—</h2><p id="dashboard-meta" class="muted">—</p></div>
+            <span id="dashboard-status" class="status neutral">Vérification…</span>
+          </article>
+
+          <div class="home-launchers" aria-label="Accès rapides">
+            <button type="button" class="home-launcher" data-home-page="live"><span class="home-launcher-icon" aria-hidden="true">◉</span><span><strong>Live</strong><small>Regarder les chaînes</small></span></button>
+            <button type="button" class="home-launcher" data-home-page="vod"><span class="home-launcher-icon" aria-hidden="true">▶</span><span><strong>Films</strong><small>Parcourir les films</small></span></button>
+            <button type="button" class="home-launcher" data-home-page="series"><span class="home-launcher-icon" aria-hidden="true">▤</span><span><strong>Séries</strong><small>Parcourir les séries</small></span></button>
+          </div>
+
+          <form id="home-search-form" class="home-search">
+            <span class="home-search-icon" aria-hidden="true">⌕</span>
+            <label class="visually-hidden" for="home-search">Rechercher un film ou une série</label>
+            <input id="home-search" type="search" minlength="3" placeholder="Rechercher un film ou une série…">
+            <button type="submit" class="secondary">Rechercher</button>
+          </form>
+
+          <section class="home-index-card">
+            <div class="home-index-head">
+              <div><p class="eyebrow">INDEX LOCAL</p><h3>Films & Séries</h3></div>
+              <span id="home-index-state" class="status neutral">Pas construit</span>
+            </div>
+            <div class="home-index-body">
+              <div id="home-index-status" class="home-index-status" aria-live="polite">Aucun index local disponible.</div>
+              <button type="button" class="secondary" id="home-index">Construire l’index</button>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section id="live" class="page catalog-page" data-catalog="live"><aside class="category-rail"><input class="category-filter" type="search" placeholder="Filtrer les catégories"><div class="category-list"></div></aside><div class="catalog-content"><div class="loading-state hidden">Chargement…</div><div class="catalog-grid live-grid"></div><div class="empty-catalog">Sélectionnez une catégorie Live.</div></div></section>

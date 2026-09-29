@@ -242,74 +242,12 @@ main {
 }
 
 .panel,
-.dashboard-hero,
 .search-hero,
-.stat,
 .category-rail,
 .provider-card,
 .preferences-form {
   border-color: color-mix(in srgb, var(--line) 88%, transparent);
   box-shadow: var(--v1-soft-shadow);
-}
-
-.dashboard-hero {
-  overflow: hidden;
-  position: relative;
-  padding: 28px;
-  background:
-    radial-gradient(circle at 92% 0%, color-mix(in srgb, var(--accent) 19%, transparent), transparent 35%),
-    linear-gradient(135deg, color-mix(in srgb, var(--panel) 96%, transparent), var(--panel));
-}
-
-.dashboard-hero::after {
-  content: "";
-  position: absolute;
-  right: -55px;
-  bottom: -80px;
-  width: 220px;
-  height: 220px;
-  border: 1px solid color-mix(in srgb, var(--accent2) 20%, transparent);
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.dashboard-hero h2 {
-  letter-spacing: -.03em;
-}
-
-.stats {
-  gap: 16px;
-}
-
-.stat {
-  position: relative;
-  overflow: hidden;
-  min-height: 116px;
-  padding: 20px 21px;
-  background: linear-gradient(145deg,
-    color-mix(in srgb, var(--panel) 97%, transparent),
-    color-mix(in srgb, var(--panel2) 84%, transparent));
-  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
-}
-
-.stat::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: linear-gradient(180deg, var(--accent), var(--accent2));
-  opacity: .78;
-}
-
-.stat:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
-  box-shadow: var(--v1-shadow);
-}
-
-.stat strong {
-  font-size: 27px;
-  letter-spacing: -.03em;
 }
 
 .panel {

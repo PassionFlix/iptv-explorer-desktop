@@ -300,28 +300,6 @@
   }
 
   function initialize() {
-    const style = document.createElement('style');
-    style.textContent = `
-      .desktop-media-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}
-      .desktop-media-actions .primary,.desktop-media-actions .secondary{margin:0}
-      .desktop-download-progress{margin-top:16px;padding:14px 16px;border:1px solid #30445f;border-radius:14px;background:#0b1423;display:grid;gap:9px}
-      .desktop-download-header{display:flex;align-items:center;justify-content:space-between;gap:16px;color:#f8fafc}
-      .desktop-download-header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .desktop-download-header span{font-variant-numeric:tabular-nums;color:#8ee9df;white-space:nowrap}
-      .desktop-download-track{height:8px;border-radius:999px;background:#17243a;overflow:hidden;position:relative}
-      .desktop-download-track span{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#7c5cff,#30d2c3);transition:width .25s ease}
-      .desktop-download-track.indeterminate span{width:35%;position:absolute;animation:iptv-download-indeterminate 1.2s ease-in-out infinite}
-      .desktop-download-meta{color:#9fb0c7;font-size:13px;font-variant-numeric:tabular-nums}
-      .desktop-download-cancel{justify-self:start}
-      .episode.has-download{flex-wrap:wrap;gap:8px}
-      .episode-actions{display:flex;align-items:center;gap:7px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
-      .episode-actions .play-small{margin-left:0}
-      .episode-actions .secondary{padding:8px 10px}
-      .episode.has-download>.desktop-download-progress{flex:1 0 100%;width:100%;margin-top:4px}
-      @keyframes iptv-download-indeterminate{0%{left:-35%}100%{left:100%}}
-    `;
-    document.head.append(style);
-
     const content = document.querySelector('#detail-content');
     if (content) new MutationObserver(() => { decorateVodActions(); decorateSeriesActions(); }).observe(content, { childList: true, subtree: true });
     document.querySelector('#detail-dialog')?.addEventListener('close', () => { currentVod = null; currentSeries = null; });

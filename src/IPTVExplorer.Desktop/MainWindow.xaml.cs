@@ -66,8 +66,6 @@ public partial class MainWindow : Window
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
             var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
-            var postV1UxScript = await File.ReadAllTextAsync(Path.Combine(assets, "post-v1-ux.js"));
-            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(postV1UxScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
         }
         catch (Exception exception)

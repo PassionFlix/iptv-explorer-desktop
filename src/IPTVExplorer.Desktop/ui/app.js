@@ -4,6 +4,7 @@
   const groups = new Map();
   let sequence = 0;
   const state = { app: null, activeProviderKey: null, page: 'home', catalogs: new Map(), policyCatalog: 'live', policy: null, onboarding: null, indexTimer: null, search: { query: '', pages: { vod: 1, series: 1 } } };
+  let updateReleaseUrl = '';
 
   function rawPost(method, params) {
     const id = `ui-${++sequence}`;
@@ -40,7 +41,6 @@
   function button(text, className, action) { const value = node('button', className, text); value.type = 'button'; value.addEventListener('click', action); return value; }
   function toast(message, error = false) { const box = $('#toast'); box.textContent = message; box.style.background = error ? '#8c3242' : '#202c40'; box.classList.add('show'); window.setTimeout(() => box.classList.remove('show'), 3200); }
   function isAbort(error) { return error && error.name === 'AbortError'; }
-  function formatDate(value) { if (!value) return 'Non communiquée'; const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'Non communiquée' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date); }
   function activeProvider() { return state.app?.providers.find(provider => provider.key === state.activeProviderKey) || null; }
 
   async function refreshApp(goHome = false) {
@@ -72,23 +72,48 @@
     if (page === 'settings') { renderProviderSettings(); loadPreferences(); }
   }
   $$('.nav').forEach(element => element.addEventListener('click', () => navigate(element.dataset.page)));
+  $$('[data-home-page]').forEach(element => element.addEventListener('click', () => navigate(element.dataset.homePage)));
+  $('#home-search-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const query = $('#home-search').value.trim();
+    navigate('search');
+    $('#global-search').value = query;
+    if (query.length >= 3) $('#search-form').requestSubmit();
+    else $('#global-search').focus();
+  });
+
+  window.addEventListener('iptv-update-available', event => {
+    const info = event.detail || {};
+    const url = typeof info.url === 'string' ? info.url.trim() : '';
+    if (!info.version || !url.startsWith('https://github.com/PassionFlix/iptv-explorer-desktop/releases/')) return;
+    updateReleaseUrl = url;
+    $('#update-title').textContent = `Mise à jour disponible — v${info.version}`;
+    $('#update-message').textContent = 'Une nouvelle version stable est disponible.';
+    $('#update-banner').classList.add('visible');
+  });
+  $('#update-download').addEventListener('click', () => { if (updateReleaseUrl) window.location.href = updateReleaseUrl; });
+  $('#update-later').addEventListener('click', () => $('#update-banner').classList.remove('visible'));
 
   async function renderHome() {
     const zero = $('#zero-state'), dashboard = $('#dashboard');
     if (!state.app || state.app.providerCount === 0) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); return; }
     if (!state.activeProviderKey) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); zero.querySelector('h2').textContent = 'Aucun fournisseur actif'; zero.querySelector('p').textContent = 'Activez un fournisseur depuis Paramètres → Fournisseurs.'; return; }
     zero.classList.add('hidden'); dashboard.classList.remove('hidden');
-    const provider = activeProvider(); $('#dashboard-name').textContent = provider.name; $('#dashboard-meta').textContent = `${provider.type.toUpperCase()} · ${provider.serverUrl}`;
+    const provider = activeProvider();
+    $('#dashboard-name').textContent = provider.name;
+    $('#dashboard-meta').textContent = provider.type.toUpperCase();
+    $('#dashboard-status').className = 'status neutral';
+    $('#dashboard-status').textContent = 'Vérification…';
     try {
       const data = await rpc('providers.dashboard', { providerKey: provider.key }, 'view');
       $('#dashboard-status').className = `status ${data.available ? 'success' : 'error'}`; $('#dashboard-status').textContent = data.available ? 'Disponible' : 'Indisponible';
-      const stats = $('#dashboard-stats'); stats.replaceChildren();
-      addStat(stats, 'Compte', data.account?.status || 'Indisponible'); addStat(stats, 'Expiration', formatDate(data.account?.expiresAt));
-      for (const summary of data.categories) addStat(stats, summary.catalog === 'vod' ? 'Films' : summary.catalog === 'series' ? 'Séries' : 'Live', `${summary.selected} / ${summary.total}`);
       renderIndexStatus(data.index, $('#home-index-status'), data.indexDirty);
+      if (data.index && ['queued', 'running'].includes(data.index.status)) {
+        if (state.indexTimer) window.clearTimeout(state.indexTimer);
+        state.indexTimer = window.setTimeout(pollIndex, 1200);
+      }
     } catch (error) { if (!isAbort(error)) toast(error.message, true); }
   }
-  function addStat(parent, label, value) { const card = node('div', 'stat'); card.append(node('span', '', label), node('strong', '', String(value))); parent.append(card); }
 
   async function loadCatalogShell(catalog) {
     const section = $(`#${catalog}`), list = section.querySelector('.category-list'); list.replaceChildren();
@@ -264,7 +289,48 @@
   async function queueIndex() { if (!state.activeProviderKey) return toast('Aucun fournisseur actif.', true); try { await rpc('index.queue', { providerKey: state.activeProviderKey }); toast('Index placé en file d’attente.'); pollIndex(); } catch (error) { toast(error.message, true); } }
   $('#build-index').addEventListener('click', queueIndex); $('#home-index').addEventListener('click', queueIndex);
   async function pollIndex() { if (state.indexTimer) window.clearTimeout(state.indexTimer); if (!state.activeProviderKey) return; try { const status = await rpc('index.status', { providerKey: state.activeProviderKey }); renderIndexStatus(status.job, $('#index-status'), status.dirty); renderIndexStatus(status.job, $('#home-index-status'), status.dirty); if (status.job && ['queued', 'running'].includes(status.job.status)) state.indexTimer = window.setTimeout(pollIndex, 1200); } catch (error) { $('#index-status').textContent = error.message; } }
-  function renderIndexStatus(job, target, dirty = false) { target.replaceChildren(); if (!job) { target.textContent = 'Pas construit'; return; } const labels = { queued: 'En attente', running: 'En cours', completed: dirty ? 'À synchroniser' : 'Prêt', failed: 'Échec', interrupted: 'Interrompu' }; target.append(node('strong', '', labels[job.status] || job.status), node('p', 'muted', job.label || '')); if (job.total > 0) { const track = node('div', 'progress-track'); const fill = node('span'); fill.style.width = `${Math.min(100, Math.round(job.current * 100 / job.total))}%`; track.append(fill); target.append(track, node('p', '', `${job.current.toLocaleString()} / ${job.total.toLocaleString()} · Films ${job.vodItems.toLocaleString()} · Séries ${job.seriesItems.toLocaleString()}`)); } if (job.error) target.append(node('p', 'form-error', job.error)); }
+  function renderIndexStatus(job, target, dirty = false) {
+    if (target.id === 'home-index-status') { renderHomeIndexStatus(job, target, dirty); return; }
+    target.replaceChildren();
+    if (!job) { target.textContent = 'Pas construit'; return; }
+    const labels = { queued: 'En attente', running: 'En cours', completed: dirty ? 'À synchroniser' : 'Prêt', failed: 'Échec', interrupted: 'Interrompu' };
+    target.append(node('strong', '', labels[job.status] || job.status), node('p', 'muted', job.label || ''));
+    if (job.total > 0) {
+      const track = node('div', 'progress-track'); const fill = node('span');
+      fill.style.width = `${Math.min(100, Math.round(job.current * 100 / job.total))}%`;
+      track.append(fill);
+      target.append(track, node('p', '', `${job.current.toLocaleString()} / ${job.total.toLocaleString()} · Films ${job.vodItems.toLocaleString()} · Séries ${job.seriesItems.toLocaleString()}`));
+    }
+    if (job.error) target.append(node('p', 'form-error', job.error));
+  }
+  function renderHomeIndexStatus(job, target, dirty) {
+    const badge = $('#home-index-state'), rebuild = $('#home-index');
+    target.replaceChildren();
+    if (!job) {
+      badge.className = 'status neutral'; badge.textContent = 'Pas construit';
+      rebuild.textContent = 'Construire l’index';
+      target.append(node('p', 'muted', 'Aucun index local disponible.'));
+      return;
+    }
+
+    const labels = { queued: 'En attente', running: 'En cours', completed: dirty ? 'À synchroniser' : 'Prêt', failed: 'Échec', interrupted: 'Interrompu' };
+    const tones = { queued: 'warning', running: 'warning', completed: dirty ? 'warning' : 'success', failed: 'error', interrupted: 'warning' };
+    badge.className = `status ${tones[job.status] || 'neutral'}`;
+    badge.textContent = labels[job.status] || job.status;
+    rebuild.textContent = 'Reconstruire l’index';
+
+    const current = Number(job.current || 0), total = Number(job.total || 0);
+    const vodItems = Number(job.vodItems || 0), seriesItems = Number(job.seriesItems || 0);
+    target.append(node('strong', 'home-index-count', `${current.toLocaleString()} contenus`));
+    target.append(node('p', 'muted home-index-breakdown', `${vodItems.toLocaleString()} films · ${seriesItems.toLocaleString()} séries`));
+    if (total > 0) {
+      const track = node('div', 'progress-track'); const fill = node('span');
+      fill.style.width = `${Math.min(100, Math.round(current * 100 / total))}%`;
+      track.append(fill); target.append(track);
+    }
+    if (job.status !== 'completed' && job.label) target.append(node('p', 'muted home-index-label', job.label));
+    if (job.error) target.append(node('p', 'form-error', job.error));
+  }
 
   async function loadPreferences() { try { const preferences = await rpc('settings.get'); const form = $('#preferences-form'); for (const key of ['interfaceLanguage', 'theme', 'audioLanguage', 'secondaryAudioLanguage', 'subtitleLanguage']) if (form.elements[key]) form.elements[key].value = preferences[key] || 'auto'; form.elements.automaticForcedSubtitles.checked = preferences.automaticForcedSubtitles; document.documentElement.dataset.theme = preferences.theme === 'system' ? '' : preferences.theme; } catch { } }
   $('#preferences-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const preferences = { activeProviderKey: state.activeProviderKey, interfaceLanguage: form.elements.interfaceLanguage.value, theme: form.elements.theme.value, audioLanguage: form.elements.audioLanguage.value || 'auto', secondaryAudioLanguage: form.elements.secondaryAudioLanguage.value || 'auto', subtitleLanguage: form.elements.subtitleLanguage.value || 'auto', automaticForcedSubtitles: form.elements.automaticForcedSubtitles.checked }; try { await rpc('settings.save', preferences); document.documentElement.dataset.theme = preferences.theme === 'system' ? '' : preferences.theme; toast('Préférences enregistrées.'); } catch (error) { toast(error.message, true); } });
