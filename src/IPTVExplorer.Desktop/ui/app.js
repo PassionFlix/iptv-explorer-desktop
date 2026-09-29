@@ -64,6 +64,7 @@
   function navigate(page) {
     cancelGroup('view'); cancelGroup('detail'); cancelGroup('home-content');
     state.page = page;
+    window.iptvHome.setActive(page === 'home');
     $$('.nav,.page').forEach(element => element.classList.remove('active'));
     $(`.nav[data-page="${page}"]`).classList.add('active');
     $(`#${page}`).classList.add('active'); $('#page-title').textContent = titles[page];
@@ -96,7 +97,7 @@
 
   async function renderHome() {
     const zero = $('#zero-state'), dashboard = $('#dashboard');
-    renderHomeMedia({ continueWatching: [], recentlyAdded: [] });
+    renderHomeMedia({});
     if (!state.app || state.app.providerCount === 0) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); return; }
     if (!state.activeProviderKey) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); zero.querySelector('h2').textContent = 'Aucun fournisseur actif'; zero.querySelector('p').textContent = 'Activez un fournisseur depuis Paramètres → Fournisseurs.'; return; }
     zero.classList.add('hidden'); dashboard.classList.remove('hidden');
@@ -121,7 +122,9 @@
 
   function renderHomeMedia(data) {
     renderContinueWatching(data?.continueWatching || []);
-    renderRecentlyAdded(data?.recentlyAdded || []);
+    renderRecentlyAdded(data?.recentlyAddedFilms || [], 'vod', 'recent-films');
+    renderRecentlyAdded(data?.recentlyAddedSeries || [], 'series', 'recent-series');
+    window.iptvHome.setBackgrounds(data?.backgroundImages || []);
   }
 
   function renderContinueWatching(items) {
@@ -152,20 +155,21 @@
     }
   }
 
-  function renderRecentlyAdded(items) {
-    const section = $('#recently-added'), grid = $('#recently-added-items');
+  function renderRecentlyAdded(items, catalog, sectionId) {
+    const section = $(`#${sectionId}`), grid = $(`#${sectionId}-items`);
     grid.replaceChildren();
     section.classList.toggle('hidden', items.length === 0);
     for (const item of items) {
       const card = node('button', 'home-media-card'); card.type = 'button';
       card.append(imageOrPlaceholder(item.imageUrl, item.title, 'home-media-poster'));
       const copy = node('span', 'home-media-copy');
-      copy.append(node('strong', '', item.title), node('small', '', item.catalog === 'series' ? 'Série' : 'Film'));
+      copy.append(node('strong', '', item.title), node('small', '', catalog === 'series' ? 'Série' : 'Film'));
       card.append(copy);
-      const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: item.catalog, mediaId: item.id });
-      card.addEventListener('click', () => openDetail(item.catalog, { id: item.id, title: item.title, imageUrl: item.imageUrl }, reference));
+      const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: catalog, mediaId: item.id });
+      card.addEventListener('click', () => openDetail(catalog, { id: item.id, title: item.title, imageUrl: item.imageUrl }, reference));
       grid.append(card);
     }
+    window.iptvHome.resetCarousel(grid);
   }
 
   async function loadCatalogShell(catalog) {

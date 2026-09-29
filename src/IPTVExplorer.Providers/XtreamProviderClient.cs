@@ -45,7 +45,7 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
         using var document = await GetAsync("get_series_info", cancellationToken, ("series_id", id));
         var root = document.RootElement;
         var info = root.TryGetProperty("info", out var detail) ? detail : root;
-        return JsonSupport.Item(info, CatalogType.Series) with { Id = id };
+        return JsonSupport.Item(info, CatalogType.Series, useSeriesModifiedDate: true) with { Id = id };
     }
 
     public async Task<VodDetails> GetVodDetailsAsync(string id, CancellationToken cancellationToken = default)
@@ -116,7 +116,7 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
     {
         using var document = await GetAsync(action, cancellationToken, ("category_id", categoryId));
         if (document.RootElement.ValueKind != JsonValueKind.Array) throw new JsonException("Expected a catalog array.");
-        return document.RootElement.EnumerateArray().Select(i => JsonSupport.Item(i, catalog)).Where(i => i.Id.Length > 0).ToArray();
+        return document.RootElement.EnumerateArray().Select(i => JsonSupport.Item(i, catalog, useSeriesModifiedDate: true)).Where(i => i.Id.Length > 0).ToArray();
     }
 
     private async Task<JsonDocument> GetAsync(string? action, CancellationToken cancellationToken, params (string Key, string Value)[] parameters)

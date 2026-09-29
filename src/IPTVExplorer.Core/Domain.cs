@@ -24,7 +24,7 @@ public sealed record ProviderCategory(string RemoteId, string Name, string Norma
 public sealed record CategoryPolicy(CategoryPolicyMode Mode, IReadOnlySet<string> SelectedIds);
 public sealed record AccountInfo(bool Authenticated, string? Status, DateTimeOffset? ExpiresAt);
 public sealed record ConnectionTestResult(bool Success, ProviderType? DetectedType, string Message);
-public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null, DateTimeOffset? AddedAt = null);
+public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null, DateTimeOffset? AddedAt = null, string? BackdropUrl = null);
 public sealed record CatalogPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total, int TotalPages);
 public sealed record MediaRequest(CatalogType Catalog, string MediaId, string? SeriesId = null, string? Extension = null);
 public sealed record ResolvedMedia(Uri Uri, IReadOnlyDictionary<string, string>? Headers = null);
@@ -39,7 +39,7 @@ public sealed record MediaReference(
     string? SeriesTitle = null,
     int? Season = null,
     int? Episode = null);
-public sealed record SearchHit(string ProviderKey, CatalogType Catalog, string RemoteId, string Title, string? ImageUrl, DateTimeOffset? AddedAt = null);
+public sealed record SearchHit(string ProviderKey, CatalogType Catalog, string RemoteId, string Title, string? ImageUrl, DateTimeOffset? AddedAt = null, string? BackdropUrl = null);
 public sealed record VodDetails(string Id, string Title, string? Poster, string? Plot, string? Year, string? Genre, string? Director, string? Cast, string? Duration, double? Rating, string? Extension);
 public sealed record EpisodeDetails(string Id, string Title, int? Season, int? Episode, string? Extension);
 public sealed record SeasonDetails(int Number, string Title, IReadOnlyList<EpisodeDetails> Episodes);

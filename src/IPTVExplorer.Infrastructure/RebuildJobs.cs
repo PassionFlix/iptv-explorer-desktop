@@ -141,6 +141,7 @@ public sealed class IndexRebuildWorker(
     RebuildJobRepository jobs,
     IProviderRepository providers,
     IProviderClientFactory clients,
+    ISecretStore secrets,
     AtomicSearchIndex indexes,
     ILogger<IndexRebuildWorker> logger) : BackgroundService
 {
@@ -166,6 +167,7 @@ public sealed class IndexRebuildWorker(
     {
         var provider = await providers.GetAsync(job.ProviderKey, cancellationToken) ?? throw new InvalidOperationException("Provider is no longer available.");
         var client = await clients.CreateAsync(provider, cancellationToken);
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
         var documents = new List<SearchHit>();
         long vod = 0, series = 0, categoryNumber = 0;
         var work = new[] { CatalogType.Vod, CatalogType.Series };
@@ -186,7 +188,8 @@ public sealed class IndexRebuildWorker(
                         ? await client.GetVodPageAsync(category.RemoteId, page, cancellationToken)
                         : await client.GetSeriesPageAsync(category.RemoteId, page, cancellationToken);
                     if (page == 1) estimatedTotal += result.Total;
-                    documents.AddRange(result.Items.Select(item => new SearchHit(provider.Key, catalog, item.Id, item.Title, item.ImageUrl, item.AddedAt)));
+                    documents.AddRange(result.Items.Select(item => new SearchHit(provider.Key, catalog, item.Id, item.Title,
+                        HomeArtwork.SafeUrl(item.ImageUrl, secret), item.AddedAt, HomeArtwork.SafeUrl(item.BackdropUrl, secret))));
                     if (catalog == CatalogType.Vod) vod += result.Items.Count; else series += result.Items.Count;
                     await jobs.ReportAsync(job.Id, documents.Count, Math.Max(documents.Count, estimatedTotal), $"{catalog} — category {categoryNumber}/{totalCategories}", vod, series, cancellationToken);
                     if (result.Items.Count == 0 || page >= result.TotalPages) break;

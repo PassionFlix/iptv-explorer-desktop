@@ -48,7 +48,7 @@ public interface IProviderClientFactory
 public interface ISearchService
 {
     Task<CatalogPage<SearchHit>> SearchAsync(string? providerKey, CatalogType catalog, string query, int page, int pageSize, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<SearchHit>> RecentlyAddedAsync(string providerKey, int limit, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SearchHit>> RecentlyAddedAsync(string providerKey, CatalogType catalog, int limit, CancellationToken cancellationToken = default);
 }
 
 public interface IPlaybackHistoryRepository

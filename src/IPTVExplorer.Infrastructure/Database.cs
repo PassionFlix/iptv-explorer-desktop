@@ -180,6 +180,23 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
                 await invalidateIndexes.ExecuteNonQueryAsync(cancellationToken);
             }
         }
+
+        // The next atomic rebuild adds provider backdrops and Xtream series recency.
+        // Do not ALTER an index in use or retain any index connection during migration.
+        await using (var artworkMigration = connection.BeginTransaction())
+        {
+            await using var artworkVersion = connection.CreateCommand();
+            artworkVersion.Transaction = artworkMigration;
+            artworkVersion.CommandText = "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(4,strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+            if (await artworkVersion.ExecuteNonQueryAsync(cancellationToken) == 1)
+            {
+                await using var invalidate = connection.CreateCommand();
+                invalidate.Transaction = artworkMigration;
+                invalidate.CommandText = "UPDATE provider_category_policy SET index_dirty=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE catalog_type IN ('vod','series')";
+                await invalidate.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await artworkMigration.CommitAsync(cancellationToken);
+        }
     }
 
     private static async Task EnsureColumnAsync(SqliteConnection connection, string table, string column, string declaration, CancellationToken cancellationToken)

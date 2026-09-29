@@ -36,27 +36,30 @@ public sealed class SearchService(AppPaths paths) : ISearchService
         return new CatalogPage<SearchHit>(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
     }
 
-    public async Task<IReadOnlyList<SearchHit>> RecentlyAddedAsync(string providerKey, int limit, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SearchHit>> RecentlyAddedAsync(string providerKey, CatalogType catalog, int limit, CancellationToken cancellationToken = default)
     {
         if (!ProviderKey.IsValid(providerKey)) throw new ArgumentException("Invalid provider key.", nameof(providerKey));
-        limit = Math.Clamp(limit, 1, 24);
+        if (catalog is not (CatalogType.Vod or CatalogType.Series)) return [];
+        limit = Math.Clamp(limit, 1, 20);
         var path = paths.SearchIndex(providerKey);
         using var indexLease = await SearchIndexFileAccess.EnterReadAsync(path, cancellationToken);
         if (!File.Exists(path)) return [];
         await using var connection = new SqliteConnection(SearchIndexFileAccess.ReadOnlyConnectionString(path));
         await connection.OpenAsync(cancellationToken);
         if (!await HasColumnAsync(connection, "search_documents", "added_at", cancellationToken)) return [];
+        var backdropColumn = await HasColumnAsync(connection, "search_documents", "backdrop_url", cancellationToken) ? "backdrop_url" : "NULL";
 
         var items = new List<SearchHit>(limit);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT catalog_type,remote_id,title,image_url,added_at
+        command.CommandText = $"""
+            SELECT catalog_type,remote_id,title,image_url,added_at,{backdropColumn}
             FROM search_documents
-            WHERE catalog_type IN ('vod','series') AND added_at IS NOT NULL
-            ORDER BY added_at DESC,title
+            WHERE catalog_type=$catalog AND added_at IS NOT NULL
+            ORDER BY added_at DESC,title,remote_id
             LIMIT $limit
             """;
         command.Parameters.AddWithValue("$limit", limit);
+        command.Parameters.AddWithValue("$catalog", catalog.ToString().ToLowerInvariant());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -65,8 +68,9 @@ public sealed class SearchService(AppPaths paths) : ISearchService
                 Enum.Parse<CatalogType>(reader.GetString(0), true),
                 reader.GetString(1),
                 reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)));
+                HomeArtwork.SafeUrl(reader.IsDBNull(3) ? null : reader.GetString(3)),
+                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                HomeArtwork.SafeUrl(reader.IsDBNull(5) ? null : reader.GetString(5))));
         }
         return items;
     }
@@ -102,14 +106,15 @@ public sealed class AtomicSearchIndex(AppPaths paths)
         {
             await connection.OpenAsync(cancellationToken);
             await using var create = connection.CreateCommand();
-            create.CommandText = "CREATE TABLE search_documents(catalog_type TEXT NOT NULL,remote_id TEXT NOT NULL,title TEXT NOT NULL,normalized_title TEXT NOT NULL,image_url TEXT,added_at TEXT,PRIMARY KEY(catalog_type,remote_id)); CREATE INDEX ix_search_title ON search_documents(catalog_type,normalized_title); CREATE INDEX ix_search_added ON search_documents(added_at DESC) WHERE added_at IS NOT NULL;";
+            create.CommandText = "CREATE TABLE search_documents(catalog_type TEXT NOT NULL,remote_id TEXT NOT NULL,title TEXT NOT NULL,normalized_title TEXT NOT NULL,image_url TEXT,added_at TEXT,backdrop_url TEXT,PRIMARY KEY(catalog_type,remote_id)); CREATE INDEX ix_search_title ON search_documents(catalog_type,normalized_title); CREATE INDEX ix_search_added ON search_documents(catalog_type,added_at DESC,title,remote_id) WHERE added_at IS NOT NULL;";
             await create.ExecuteNonQueryAsync(cancellationToken);
             await using var transaction = connection.BeginTransaction();
             foreach (var item in documents)
             {
                 await using var insert = connection.CreateCommand(); insert.Transaction = transaction;
-                insert.CommandText = "INSERT OR REPLACE INTO search_documents(catalog_type,remote_id,title,normalized_title,image_url,added_at) VALUES($catalog,$id,$title,$normalized,$image,$added)";
-                insert.Parameters.AddWithValue("$catalog", item.Catalog.ToString().ToLowerInvariant()); insert.Parameters.AddWithValue("$id", item.RemoteId); insert.Parameters.AddWithValue("$title", item.Title); insert.Parameters.AddWithValue("$normalized", SearchService.Normalize(item.Title)); insert.Parameters.AddWithValue("$image", (object?)item.ImageUrl ?? DBNull.Value); insert.Parameters.AddWithValue("$added", item.AddedAt is { } added ? added.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) : DBNull.Value);
+                insert.CommandText = "INSERT OR REPLACE INTO search_documents(catalog_type,remote_id,title,normalized_title,image_url,added_at,backdrop_url) VALUES($catalog,$id,$title,$normalized,$image,$added,$backdrop)";
+                insert.Parameters.AddWithValue("$catalog", item.Catalog.ToString().ToLowerInvariant()); insert.Parameters.AddWithValue("$id", item.RemoteId); insert.Parameters.AddWithValue("$title", item.Title); insert.Parameters.AddWithValue("$normalized", SearchService.Normalize(item.Title)); insert.Parameters.AddWithValue("$image", (object?)HomeArtwork.SafeUrl(item.ImageUrl) ?? DBNull.Value); insert.Parameters.AddWithValue("$added", item.AddedAt is { } added ? added.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) : DBNull.Value);
+                insert.Parameters.AddWithValue("$backdrop", (object?)HomeArtwork.SafeUrl(item.BackdropUrl) ?? DBNull.Value);
                 await insert.ExecuteNonQueryAsync(cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);

@@ -10,6 +10,10 @@
 </head>
 <body>
   <div class="shell">
+    <div id="home-backdrop" class="home-backdrop hidden" aria-hidden="true">
+      <img class="home-backdrop-layer" alt="" referrerpolicy="no-referrer">
+      <img class="home-backdrop-layer" alt="" referrerpolicy="no-referrer">
+    </div>
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">IE</span><div><strong>IPTV Explorer</strong><small>Desktop · 1.0.0</small></div></div>
       <nav aria-label="Navigation principale">
@@ -76,9 +80,22 @@
             <div id="continue-watching-items" class="home-media-grid"></div>
           </section>
 
-          <section id="recently-added" class="home-media-section hidden">
-            <div class="home-media-heading"><p class="eyebrow">NOUVEAUTÉS</p><h2>Récemment ajoutés</h2></div>
-            <div id="recently-added-items" class="home-media-grid"></div>
+          <section id="recent-films" class="home-media-section hidden" aria-labelledby="recent-films-title">
+            <div class="home-media-heading"><p class="eyebrow">NOUVEAUTÉS</p><h2 id="recent-films-title">Récemment ajoutés — Films</h2></div>
+            <div class="home-carousel">
+              <button type="button" class="home-carousel-arrow" data-direction="-1" aria-label="Films précédents" aria-controls="recent-films-items" disabled>‹</button>
+              <div id="recent-films-items" class="home-carousel-track" tabindex="0" role="region" aria-label="Films récemment ajoutés"></div>
+              <button type="button" class="home-carousel-arrow" data-direction="1" aria-label="Films suivants" aria-controls="recent-films-items" disabled>›</button>
+            </div>
+          </section>
+
+          <section id="recent-series" class="home-media-section hidden" aria-labelledby="recent-series-title">
+            <div class="home-media-heading"><p class="eyebrow">NOUVEAUTÉS</p><h2 id="recent-series-title" title="Selon les dates d’ajout ou de mise à jour communiquées par le fournisseur.">Récemment ajoutées — Séries</h2></div>
+            <div class="home-carousel">
+              <button type="button" class="home-carousel-arrow" data-direction="-1" aria-label="Séries précédentes" aria-controls="recent-series-items" disabled>‹</button>
+              <div id="recent-series-items" class="home-carousel-track" tabindex="0" role="region" aria-label="Séries récemment ajoutées ou mises à jour"></div>
+              <button type="button" class="home-carousel-arrow" data-direction="1" aria-label="Séries suivantes" aria-controls="recent-series-items" disabled>›</button>
+            </div>
           </section>
         </div>
       </section>
@@ -109,6 +126,7 @@
 
   <dialog id="detail-dialog" class="modal detail-modal"><div class="dialog-head"><h2 id="detail-title">Détails</h2><button type="button" class="icon-button close-dialog" aria-label="Fermer">×</button></div><div id="detail-content"></div></dialog>
   <dialog id="edit-dialog" class="modal"><form id="edit-form" method="dialog"><div class="dialog-head"><h2>Modifier le fournisseur</h2><button type="button" class="icon-button close-dialog" aria-label="Fermer">×</button></div><input type="hidden" name="providerKey"><label>Nom<input name="name" required maxlength="80"></label><label>URL<input name="serverUrl" type="url" required></label><div id="edit-xtream"><label>Username<input name="username" placeholder="Laisser vide pour conserver"></label><label>Nouveau mot de passe<input name="password" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label></div><div id="edit-stalker"><label>Nouvelle MAC<input name="macAddress" placeholder="Laisser vide pour conserver"></label></div><p class="hint">Le secret existant n’est jamais affiché. La nouvelle configuration sera testée avant remplacement.</p><div id="edit-error" class="form-error"></div><footer><button class="primary">Tester et enregistrer</button></footer></form></dialog>
+  <script src="home-media.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

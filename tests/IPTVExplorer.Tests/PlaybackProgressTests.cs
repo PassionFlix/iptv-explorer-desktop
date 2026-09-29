@@ -113,7 +113,8 @@ public sealed class PlaybackProgressTests
             new("fixture-provider", CatalogType.Vod, "unknown", "Unknown date", null)
         ]);
 
-        var items = await search.RecentlyAddedAsync("fixture-provider", 12);
+        var items = (await search.RecentlyAddedAsync("fixture-provider", CatalogType.Series, 12))
+            .Concat(await search.RecentlyAddedAsync("fixture-provider", CatalogType.Vod, 12)).ToArray();
 
         Assert.Equal(["new", "old"], items.Select(item => item.RemoteId));
         Assert.All(items, item => Assert.NotNull(item.AddedAt));

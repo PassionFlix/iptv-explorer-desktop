@@ -18,6 +18,7 @@ public sealed class BridgeRouter(
     RebuildJobRepository jobs,
     ISearchService search,
     IPlaybackHistoryRepository playbackHistory,
+    ISecretStore secrets,
     PlaybackCoordinator playback,
     AppPaths paths,
     ILogger<BridgeRouter> logger)
@@ -257,9 +258,25 @@ public sealed class BridgeRouter(
         if (!string.Equals(preferences.ActiveProviderKey, providerKey, StringComparison.Ordinal)) throw new InvalidOperationException("The requested provider is not active.");
 
         var inProgress = await playbackHistory.ListInProgressAsync(providerKey, 6, cancellationToken);
-        var recent = provider.Type == ProviderType.Xtream
-            ? await search.RecentlyAddedAsync(providerKey, 12, cancellationToken)
+        var recentFilms = provider.Type == ProviderType.Xtream
+            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Vod, 20, cancellationToken)
             : [];
+        var recentSeries = provider.Type == ProviderType.Xtream
+            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken)
+            : [];
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
+        object RecentItem(SearchHit item) => new
+        {
+            catalog = item.Catalog.ToString().ToLowerInvariant(),
+            id = item.RemoteId,
+            item.Title,
+            imageUrl = HomeArtwork.SafeUrl(item.ImageUrl, secret),
+            addedAt = item.AddedAt
+        };
+        var backgrounds = inProgress.Take(1).Select(progress => HomeArtwork.Candidates(null, progress.PosterUrl, secret))
+            .Concat(recentFilms.Take(6).Select(item => HomeArtwork.Candidates(item.BackdropUrl, item.ImageUrl, secret)))
+            .Concat(recentSeries.Take(6).Select(item => HomeArtwork.Candidates(item.BackdropUrl, item.ImageUrl, secret)))
+            .Where(candidates => candidates.Count > 0).DistinctBy(candidates => candidates[0]).ToArray();
         return new
         {
             continueWatching = inProgress.Select(progress => new
@@ -271,20 +288,15 @@ public sealed class BridgeRouter(
                 episodeTitle = progress.Catalog == CatalogType.Series ? progress.Title : null,
                 progress.Season,
                 progress.Episode,
-                posterUrl = SafeImage(progress.PosterUrl),
+                posterUrl = HomeArtwork.SafeUrl(progress.PosterUrl, secret),
                 positionSeconds = progress.Position.TotalSeconds,
                 durationSeconds = progress.Duration?.TotalSeconds,
                 percentage = PlaybackProgressPolicy.Percentage(progress.Position, progress.Duration),
                 updatedAt = progress.UpdatedAt
             }),
-            recentlyAdded = recent.Select(item => new
-            {
-                catalog = item.Catalog.ToString().ToLowerInvariant(),
-                id = item.RemoteId,
-                item.Title,
-                imageUrl = SafeImage(item.ImageUrl),
-                addedAt = item.AddedAt
-            }),
+            recentlyAddedFilms = recentFilms.Select(RecentItem),
+            recentlyAddedSeries = recentSeries.Select(RecentItem),
+            backgroundImages = backgrounds,
             recentSupported = provider.Type == ProviderType.Xtream
         };
     }

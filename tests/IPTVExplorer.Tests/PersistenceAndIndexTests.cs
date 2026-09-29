@@ -102,7 +102,7 @@ public sealed class PersistenceAndIndexTests
         ]);
 
         Assert.Single((await search.SearchAsync("fixture-provider", CatalogType.Vod, "old", 1, 20)).Items);
-        Assert.Equal("old", Assert.Single(await search.RecentlyAddedAsync("fixture-provider", 12)).RemoteId);
+        Assert.Equal("old", Assert.Single(await search.RecentlyAddedAsync("fixture-provider", CatalogType.Vod, 12)).RemoteId);
 
         await index.ReplaceAsync("fixture-provider",
         [
@@ -110,7 +110,7 @@ public sealed class PersistenceAndIndexTests
         ]);
 
         Assert.Empty((await search.SearchAsync("fixture-provider", CatalogType.Vod, "old", 1, 20)).Items);
-        var recent = Assert.Single(await search.RecentlyAddedAsync("fixture-provider", 12));
+        var recent = Assert.Single(await search.RecentlyAddedAsync("fixture-provider", CatalogType.Series, 12));
         Assert.Equal("new", recent.RemoteId);
         Assert.Equal(newDate, recent.AddedAt);
         var path = database.Paths.SearchIndex("fixture-provider");

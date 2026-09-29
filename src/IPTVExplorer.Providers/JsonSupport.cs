@@ -135,7 +135,7 @@ internal static class JsonSupport
     private static string Kind(JsonElement element) => element.ValueKind.ToString().ToLowerInvariant();
     private static string Names(IEnumerable<string> names) => string.Join('|', names.Take(12).Select(name => new string(name.Where(character => char.IsLetterOrDigit(character) || character is '_' or '-').Take(40).ToArray())).Where(name => name.Length > 0));
 
-    public static CatalogItem Item(JsonElement item, CatalogType catalog)
+    public static CatalogItem Item(JsonElement item, CatalogType catalog, bool useSeriesModifiedDate = false)
     {
         var id = catalog switch
         {
@@ -149,7 +149,25 @@ internal static class JsonSupport
         var extension = item.Text("container_extension");
         var year = item.Text("year", "releaseDate", "releasedate");
         double? rating = double.TryParse(item.Text("rating", "rating_5based", "kinopoisk_rating"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedRating) ? parsedRating : null;
-        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, ParseAddedAt(item.Text("added", "added_at", "created_at")));
+        var added = new[] { "added", "added_at", "created_at" }
+            .Select(field => ParseAddedAt(item.Text(field))).FirstOrDefault(date => date is not null);
+        // Xtream exposes last_modified for series. This is provider recency (including updates),
+        // never the release year, local indexing time, list position or an inferred creation date.
+        if (added is null && catalog == CatalogType.Series && useSeriesModifiedDate)
+            added = ParseAddedAt(item.Text("last_modified"));
+        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, added, Backdrop(item));
+    }
+
+    private static string? Backdrop(JsonElement item)
+    {
+        foreach (var field in new[] { "backdrop_path", "backdrop" })
+        {
+            if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty(field, out var value)) continue;
+            var candidates = value.ValueKind == JsonValueKind.Array ? value.EnumerateArray().ToArray() : [value];
+            foreach (var candidate in candidates)
+                if (candidate.ValueKind == JsonValueKind.String && HomeArtwork.SafeUrl(candidate.GetString()) is { } safe) return safe;
+        }
+        return null;
     }
 
     private static DateTimeOffset? ParseAddedAt(string? value)
