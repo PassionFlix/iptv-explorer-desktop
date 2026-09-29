@@ -14,7 +14,6 @@ internal static class TrueFullscreenBehavior
     public static void Attach(Window window)
     {
         window.StateChanged += (_, _) => ApplyIfFullscreen(window);
-        window.LocationChanged += (_, _) => ApplyIfFullscreen(window);
     }
 
     private static void ApplyIfFullscreen(Window window)
