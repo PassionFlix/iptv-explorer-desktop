@@ -8,6 +8,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>$(BaseIntermediateOutputPath)IPTVExplorer.generated.ico</ApplicationIcon>
+    <LibMpvRuntimeDirectory>$(MSBuildProjectDirectory)\native\mpv</LibMpvRuntimeDirectory>
+    <LibMpvLibraryPath>$(LibMpvRuntimeDirectory)\libmpv-2.dll</LibMpvLibraryPath>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\IPTVExplorer.Core\IPTVExplorer.Core.csproj" />
@@ -20,9 +22,21 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="ui\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="native\mpv\libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\libmpv-2.dll')" />
     <Content Include="native\mpv\README.txt" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\README.txt')" />
   </ItemGroup>
+  <Target Name="PrepareLibMpvRuntime" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$(DesignTimeBuild)' != 'true'">
+    <Exec Condition="!Exists('$(LibMpvLibraryPath)')" Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Get-LibMpvRuntime.ps1&quot;" />
+    <Error Condition="!Exists('$(LibMpvLibraryPath)')" Text="Le runtime libmpv requis est absent après sa préparation : $(LibMpvLibraryPath)" />
+    <ItemGroup>
+      <Content Include="$(LibMpvRuntimeDirectory)\*.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+  <Target Name="ValidateLibMpvBuildOutput" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(OutDir)native\mpv\libmpv-2.dll')" Text="Le build est incomplet : native\mpv\libmpv-2.dll est absent du dossier de sortie." />
+  </Target>
+  <Target Name="ValidateLibMpvPublishOutput" AfterTargets="Publish" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <Error Condition="!Exists('$(PublishDir)native\mpv\libmpv-2.dll')" Text="Le publish est incomplet : native\mpv\libmpv-2.dll est absent du dossier publié." />
+  </Target>
   <Target Name="GenerateApplicationIcon" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <MakeDir Directories="$(BaseIntermediateOutputPath)" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Generate-AppIcon.ps1&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)IPTVExplorer.generated.ico&quot;" />

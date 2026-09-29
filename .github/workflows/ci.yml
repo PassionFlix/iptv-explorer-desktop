@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - phase-3-libmpv
+      - post-v1-ux-updates
   pull_request:
 
 permissions:
@@ -30,6 +31,13 @@ jobs:
 
       - name: Build
         run: dotnet build .\IPTVExplorer.Desktop.sln -c Release --no-restore
+
+      - name: Verify native player runtime
+        shell: pwsh
+        run: |
+          $runtime = '.\src\IPTVExplorer.Desktop\bin\Release\net10.0-windows10.0.19041.0\win-x64\native\mpv\libmpv-2.dll'
+          if (-not (Test-Path -LiteralPath $runtime)) { throw "Runtime libmpv absent du build : $runtime" }
+          if ((Get-Item -LiteralPath $runtime).Length -le 0) { throw "Runtime libmpv vide : $runtime" }
 
       - name: Test
         run: dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build --logger "console;verbosity=normal"

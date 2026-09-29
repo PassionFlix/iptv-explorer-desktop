@@ -80,11 +80,30 @@ public sealed class PlayerPhase3Tests
         var root = Path.Combine(Path.GetTempPath(), "missing-libmpv", Guid.NewGuid().ToString("N"));
         await using var player = new LibMpvPlayerService(new LibMpvApiFactory(new LibMpvLibraryLocator(root)));
 
-        var exception = await Assert.ThrowsAsync<LibMpvNotInstalledException>(() =>
+        var exception = await Assert.ThrowsAsync<LibMpvUnavailableException>(() =>
             player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/private")), (nint)123));
 
-        Assert.Equal("Le moteur vidéo libmpv n'est pas installé.", exception.Message);
+        Assert.Equal(LibMpvFailureReason.RuntimeMissing, exception.Reason);
+        Assert.Equal("Le runtime vidéo libmpv est absent du dossier de l’application.", exception.Message);
         Assert.DoesNotContain("media.example.invalid", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(126, LibMpvFailureReason.NativeDependencyMissing, "libmpv a été trouvé, mais une dépendance native requise est absente.")]
+    [InlineData(193, LibMpvFailureReason.ArchitectureMismatch, "libmpv a été trouvé, mais son architecture est incompatible avec l’application x64.")]
+    [InlineData(127, LibMpvFailureReason.IncompatibleRuntime, "libmpv a été trouvé, mais cette version est incompatible avec IPTV Explorer.")]
+    [InlineData(1114, LibMpvFailureReason.LoadFailure, "libmpv a été trouvé, mais Windows n’a pas pu charger le runtime vidéo.")]
+    public void LibMpvLoadErrorsProduceSpecificSafeDiagnostics(
+        int errorCode,
+        LibMpvFailureReason expected,
+        string expectedMessage)
+    {
+        var exception = LibMpvApiFactory.FailureForWindowsError(errorCode);
+
+        Assert.Equal(expected, exception.Reason);
+        Assert.Equal(expectedMessage, exception.Message);
+        Assert.DoesNotContain(".dll", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\\", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

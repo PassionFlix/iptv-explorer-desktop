@@ -22,16 +22,20 @@ dotnet build .\IPTVExplorer.Desktop.sln -c Release --no-restore
 dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build --logger "console;verbosity=normal"
 ```
 
+Au premier build Windows, MSBuild récupère automatiquement le runtime libmpv épinglé s'il est absent, vérifie le SHA-256 de son archive, puis copie ses DLL dans `native\mpv` sous le dossier de sortie. Le build échoue explicitement si le runtime ne peut pas être préparé ou copié.
+
 Le script historique `scripts/Test-WindowsPhase2.ps1` reste disponible pour les validations interactives Windows et peut lancer l'application avec `-Launch`.
 
 ## Runtime libmpv
 
 Les binaires natifs ne sont pas stockés dans Git.
 
-Pour récupérer la build x64 LGPL épinglée et vérifier son SHA-256 :
+Le build standard exécute automatiquement cette préparation. Pour précharger ou actualiser manuellement la build x64 LGPL épinglée :
 
 ```powershell
 .\scripts\Get-LibMpvRuntime.ps1
+# ou pour forcer une nouvelle récupération
+.\scripts\Get-LibMpvRuntime.ps1 -Force
 ```
 
 Le fichier principal attendu est :

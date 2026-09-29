@@ -68,13 +68,48 @@ internal sealed class LibMpvApiFactory(LibMpvLibraryLocator locator) : ILibMpvAp
 {
     public ILibMpvApi Create()
     {
-        if (!File.Exists(locator.LibraryPath) || !OperatingSystem.IsWindows()) throw new LibMpvNotInstalledException();
+        if (!OperatingSystem.IsWindows()) throw new LibMpvUnavailableException(
+            LibMpvFailureReason.UnsupportedPlatform,
+            "Le lecteur libmpv est uniquement pris en charge sous Windows x64.");
+        if (!File.Exists(locator.LibraryPath)) throw new LibMpvUnavailableException(
+            LibMpvFailureReason.RuntimeMissing,
+            "Le runtime vidéo libmpv est absent du dossier de l’application.");
         try { return new LibMpvNativeApi(locator.LibraryPath); }
-        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        catch (LibMpvUnavailableException)
         {
-            throw new LibMpvNotInstalledException();
+            throw;
+        }
+        catch (BadImageFormatException)
+        {
+            throw FailureForWindowsError(193);
+        }
+        catch (DllNotFoundException)
+        {
+            throw FailureForWindowsError(126);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            throw new LibMpvUnavailableException(
+                LibMpvFailureReason.IncompatibleRuntime,
+                "libmpv a été trouvé, mais cette version est incompatible avec IPTV Explorer.");
         }
     }
+
+    internal static LibMpvUnavailableException FailureForWindowsError(int errorCode) => errorCode switch
+    {
+        126 => new(
+            LibMpvFailureReason.NativeDependencyMissing,
+            "libmpv a été trouvé, mais une dépendance native requise est absente."),
+        193 => new(
+            LibMpvFailureReason.ArchitectureMismatch,
+            "libmpv a été trouvé, mais son architecture est incompatible avec l’application x64."),
+        127 => new(
+            LibMpvFailureReason.IncompatibleRuntime,
+            "libmpv a été trouvé, mais cette version est incompatible avec IPTV Explorer."),
+        _ => new(
+            LibMpvFailureReason.LoadFailure,
+            "libmpv a été trouvé, mais Windows n’a pas pu charger le runtime vidéo.")
+    };
 }
 
 internal sealed class LibMpvNativeApi : ILibMpvApi
@@ -96,9 +131,11 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
 
     public LibMpvNativeApi(string absoluteLibraryPath)
     {
-        if (!Path.IsPathFullyQualified(absoluteLibraryPath)) throw new LibMpvNotInstalledException();
+        if (!Path.IsPathFullyQualified(absoluteLibraryPath)) throw new LibMpvUnavailableException(
+            LibMpvFailureReason.RuntimeMissing,
+            "Le chemin du runtime vidéo libmpv est invalide.");
         _module = LoadLibraryExW(absoluteLibraryPath, 0, LoadLibrarySearchDllLoadDir | LoadLibrarySearchDefaultDirs);
-        if (_module == 0) throw new LibMpvNotInstalledException();
+        if (_module == 0) throw LibMpvApiFactory.FailureForWindowsError(Marshal.GetLastWin32Error());
 
         try
         {

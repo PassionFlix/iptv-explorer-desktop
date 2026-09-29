@@ -21,6 +21,18 @@ $publishDir = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot ($packageName + '.zip')
 $checksumsPath = Join-Path $OutputRoot 'SHA256SUMS.txt'
 
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version invalide : $Version" }
 
 [xml]$props = Get-Content -LiteralPath (Join-Path $repoRoot 'Directory.Build.props') -Raw
@@ -29,7 +41,7 @@ if ($declaredVersion -ne $Version) {
     throw "La version demandée ($Version) ne correspond pas à Directory.Build.props ($declaredVersion)."
 }
 
-if ($DownloadLibMpv -and -not (Test-Path -LiteralPath $mpvDll)) {
+if (-not (Test-Path -LiteralPath $mpvDll)) {
     & (Join-Path $PSScriptRoot 'Get-LibMpvRuntime.ps1')
 }
 if (-not (Test-Path -LiteralPath $mpvDll)) {
@@ -72,6 +84,18 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $publishDir -Force
 
     Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        $runtimeEntry = $zip.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq 'native/mpv/libmpv-2.dll' } | Select-Object -First 1
+        if (-not $runtimeEntry -or $runtimeEntry.Length -le 0) {
+            throw "ZIP portable incomplet : native/mpv/libmpv-2.dll est absent ou vide."
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
 
     $releaseFiles = [System.Collections.Generic.List[string]]::new()
     $releaseFiles.Add($zipPath)
@@ -132,7 +156,7 @@ try {
     }
 
     $checksumLines = foreach ($file in $releaseFiles) {
-        $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hash = Get-Sha256 $file
         "$hash  $([System.IO.Path]::GetFileName($file))"
     }
     Set-Content -LiteralPath $checksumsPath -Value $checksumLines -Encoding ascii

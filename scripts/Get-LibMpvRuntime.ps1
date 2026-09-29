@@ -9,6 +9,18 @@ $manifestPath = Join-Path $repoRoot 'build\libmpv-runtime.json'
 $targetDir = Join-Path $repoRoot 'src\IPTVExplorer.Desktop\native\mpv'
 $targetDll = Join-Path $targetDir 'libmpv-2.dll'
 
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 if ((Test-Path -LiteralPath $targetDll) -and -not $Force) {
     Write-Host "libmpv déjà présent : $targetDll"
     return
@@ -19,9 +31,24 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$sevenZip = Get-Command 7z -ErrorAction SilentlyContinue
+$sevenZipCandidates = [System.Collections.Generic.List[string]]::new()
+$sevenZipCommand = Get-Command 7z -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($sevenZipCommand -and $sevenZipCommand.Source) {
+    $sevenZipCandidates.Add($sevenZipCommand.Source)
+}
+foreach ($candidate in @(
+    (Join-Path $env:ProgramFiles '7-Zip\7z.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\7-Zip\7z.exe')
+)) {
+    if ($candidate) { $sevenZipCandidates.Add($candidate) }
+}
+$sevenZip = $sevenZipCandidates |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+    Select-Object -Unique |
+    Select-Object -First 1
 if (-not $sevenZip) {
-    throw "7-Zip (commande 7z) est requis pour extraire le runtime libmpv."
+    throw "7-Zip x64 est requis pour extraire le runtime libmpv. Installez 7-Zip ou ajoutez 7z.exe au PATH."
 }
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('iptv-explorer-libmpv-' + [Guid]::NewGuid().ToString('N'))
@@ -33,13 +60,13 @@ try {
     Write-Host "Téléchargement de $($manifest.assetName)..."
     Invoke-WebRequest -Uri $manifest.downloadUrl -OutFile $archive -UseBasicParsing
 
-    $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256 $archive
     $expectedHash = [string]$manifest.sha256
     if ($actualHash -ne $expectedHash.ToLowerInvariant()) {
         throw "SHA-256 libmpv invalide. Attendu: $expectedHash ; obtenu: $actualHash"
     }
 
-    & $sevenZip.Source x $archive "-o$extract" -y | Out-Null
+    & $sevenZip x $archive "-o$extract" -y | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Échec de l'extraction libmpv (code $LASTEXITCODE)." }
 
     $library = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter $manifest.expectedLibrary | Select-Object -First 1

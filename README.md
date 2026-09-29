@@ -103,7 +103,9 @@ dotnet build .\IPTVExplorer.Desktop.sln -c Release --no-restore
 dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build
 ```
 
-Pour préparer le runtime libmpv LGPL utilisé par le packaging :
+Le premier build Windows récupère automatiquement la build libmpv x64 épinglée, contrôle son SHA-256 et vérifie sa présence dans le dossier de sortie. 7-Zip doit être installé ; le script détecte `7z.exe` dans `PATH` et dans les emplacements Windows habituels.
+
+Pour précharger ou actualiser manuellement le runtime libmpv LGPL utilisé par le build et le packaging :
 
 ```powershell
 .\scripts\Get-LibMpvRuntime.ps1

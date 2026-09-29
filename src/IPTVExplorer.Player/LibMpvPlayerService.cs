@@ -3,7 +3,20 @@ using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Player;
 
-public sealed class LibMpvNotInstalledException() : InvalidOperationException("Le moteur vidéo libmpv n'est pas installé.");
+public enum LibMpvFailureReason
+{
+    RuntimeMissing,
+    UnsupportedPlatform,
+    NativeDependencyMissing,
+    ArchitectureMismatch,
+    IncompatibleRuntime,
+    LoadFailure
+}
+
+public sealed class LibMpvUnavailableException(LibMpvFailureReason reason, string message) : InvalidOperationException(message)
+{
+    public LibMpvFailureReason Reason { get; } = reason;
+}
 
 public sealed class LibMpvPlayerService : IPlayerService, IDisposable
 {
@@ -63,9 +76,9 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             if (api.LoadFile(handle, media.Uri.AbsoluteUri, headers) < 0)
                 throw new InvalidOperationException("Impossible de charger le média dans libmpv.");
         }
-        catch (LibMpvNotInstalledException)
+        catch (LibMpvUnavailableException exception)
         {
-            RaiseState(PlayerState.Error, "Le moteur vidéo libmpv n'est pas installé.");
+            RaiseState(PlayerState.Error, exception.Message);
             throw;
         }
         catch (OperationCanceledException)

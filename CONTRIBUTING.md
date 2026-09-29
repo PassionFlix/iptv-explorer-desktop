@@ -21,7 +21,7 @@ dotnet build .\IPTVExplorer.Desktop.sln -c Release --no-restore
 dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build
 ```
 
-Pour les tests réels du lecteur, placez un runtime libmpv x64 dans `src/IPTVExplorer.Desktop/native/mpv/` ou exécutez :
+Le premier build Windows récupère automatiquement le runtime libmpv x64 épinglé et vérifie son archive. 7-Zip doit être installé. Pour préparer le runtime avant le build ou forcer son actualisation, exécutez :
 
 ```powershell
 .\scripts\Get-LibMpvRuntime.ps1
