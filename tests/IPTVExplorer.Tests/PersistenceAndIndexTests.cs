@@ -89,6 +89,40 @@ public sealed class PersistenceAndIndexTests
     }
 
     [Fact]
+    public async Task AtomicIndexReplacesPreviouslyReadPooledIndexAndReopensNewData()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var index = new AtomicSearchIndex(database.Paths);
+        var search = new SearchService(database.Paths);
+        var oldDate = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var newDate = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        await index.ReplaceAsync("fixture-provider",
+        [
+            new("fixture-provider", CatalogType.Vod, "old", "Old title", null, oldDate)
+        ]);
+
+        Assert.Single((await search.SearchAsync("fixture-provider", CatalogType.Vod, "old", 1, 20)).Items);
+        Assert.Equal("old", Assert.Single(await search.RecentlyAddedAsync("fixture-provider", 12)).RemoteId);
+
+        await index.ReplaceAsync("fixture-provider",
+        [
+            new("fixture-provider", CatalogType.Series, "new", "New title", null, newDate)
+        ]);
+
+        Assert.Empty((await search.SearchAsync("fixture-provider", CatalogType.Vod, "old", 1, 20)).Items);
+        var recent = Assert.Single(await search.RecentlyAddedAsync("fixture-provider", 12));
+        Assert.Equal("new", recent.RemoteId);
+        Assert.Equal(newDate, recent.AddedAt);
+        var path = database.Paths.SearchIndex("fixture-provider");
+        Assert.False(File.Exists(path + ".tmp"));
+        Assert.False(File.Exists(path + ".tmp-wal"));
+        Assert.False(File.Exists(path + ".tmp-shm"));
+        Assert.False(File.Exists(path + ".previous"));
+        Assert.False(File.Exists(path + ".previous-wal"));
+        Assert.False(File.Exists(path + ".previous-shm"));
+    }
+
+    [Fact]
     public async Task ProviderUpdateKeepsBlankSecretAndDeleteRemovesIt()
     {
         await using var database = await TestDatabase.CreateAsync();

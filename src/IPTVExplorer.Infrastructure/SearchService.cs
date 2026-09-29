@@ -13,9 +13,9 @@ public sealed class SearchService(AppPaths paths) : ISearchService
         if (!ProviderKey.IsValid(providerKey)) throw new ArgumentException("Invalid provider key.", nameof(providerKey));
         page = Math.Max(1, page); pageSize = Math.Clamp(pageSize, 1, 100);
         var path = paths.SearchIndex(providerKey);
+        using var indexLease = await SearchIndexFileAccess.EnterReadAsync(path, cancellationToken);
         if (!File.Exists(path)) return new CatalogPage<SearchHit>([], page, pageSize, 0, 0);
-        var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = true };
-        await using var connection = new SqliteConnection(builder.ConnectionString);
+        await using var connection = new SqliteConnection(SearchIndexFileAccess.ReadOnlyConnectionString(path));
         await connection.OpenAsync(cancellationToken);
         var normalized = Normalize(query);
         var total = 0;
@@ -41,9 +41,9 @@ public sealed class SearchService(AppPaths paths) : ISearchService
         if (!ProviderKey.IsValid(providerKey)) throw new ArgumentException("Invalid provider key.", nameof(providerKey));
         limit = Math.Clamp(limit, 1, 24);
         var path = paths.SearchIndex(providerKey);
+        using var indexLease = await SearchIndexFileAccess.EnterReadAsync(path, cancellationToken);
         if (!File.Exists(path)) return [];
-        var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = true };
-        await using var connection = new SqliteConnection(builder.ConnectionString);
+        await using var connection = new SqliteConnection(SearchIndexFileAccess.ReadOnlyConnectionString(path));
         await connection.OpenAsync(cancellationToken);
         if (!await HasColumnAsync(connection, "search_documents", "added_at", cancellationToken)) return [];
 
@@ -96,7 +96,7 @@ public sealed class AtomicSearchIndex(AppPaths paths)
     {
         var destination = paths.SearchIndex(providerKey);
         var temporary = destination + ".tmp";
-        File.Delete(temporary);
+        await DeleteIndexFamilyAsync(temporary, includeDatabase: true, cancellationToken);
         var builder = new SqliteConnectionStringBuilder { DataSource = temporary, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
         await using (var connection = new SqliteConnection(builder.ConnectionString))
         {
@@ -116,16 +116,91 @@ public sealed class AtomicSearchIndex(AppPaths paths)
             await using var check = connection.CreateCommand(); check.CommandText = "PRAGMA quick_check";
             if (!string.Equals(Convert.ToString(await check.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture), "ok", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The temporary search index failed quick_check.");
         }
+
+        using var indexLease = await SearchIndexFileAccess.EnterWriteAsync(destination, cancellationToken);
+        SearchIndexFileAccess.ClearReadPool(destination);
+        await DeleteIndexFamilyAsync(temporary, includeDatabase: false, cancellationToken);
+        await DeleteIndexFamilyAsync(destination, includeDatabase: false, cancellationToken);
         if (File.Exists(destination))
         {
             var backup = destination + ".previous";
-            File.Delete(backup);
-            File.Replace(temporary, destination, backup, ignoreMetadataErrors: true);
-            File.Delete(backup);
+            await DeleteIndexFamilyAsync(backup, includeDatabase: true, cancellationToken);
+            await ReplaceWithRetryAsync(temporary, destination, backup, cancellationToken);
+            await TryDeleteIndexFamilyAsync(backup, cancellationToken);
         }
         else
         {
-            File.Move(temporary, destination);
+            await MoveWithRetryAsync(temporary, destination, cancellationToken);
+        }
+    }
+
+    private static async Task ReplaceWithRetryAsync(string temporary, string destination, string backup, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Replace(temporary, destination, backup, ignoreMetadataErrors: true);
+                return;
+            }
+            catch (IOException) when (attempt < 3)
+            {
+                SearchIndexFileAccess.ClearReadPool(destination);
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken);
+            }
+        }
+    }
+
+    private static async Task MoveWithRetryAsync(string temporary, string destination, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporary, destination);
+                return;
+            }
+            catch (IOException) when (attempt < 3)
+            {
+                SearchIndexFileAccess.ClearReadPool(destination);
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken);
+            }
+        }
+    }
+
+    private static async Task DeleteIndexFamilyAsync(string path, bool includeDatabase, CancellationToken cancellationToken)
+    {
+        if (includeDatabase) await DeleteWithRetryAsync(path, cancellationToken);
+        await DeleteWithRetryAsync(path + "-wal", cancellationToken);
+        await DeleteWithRetryAsync(path + "-shm", cancellationToken);
+        await DeleteWithRetryAsync(path + "-journal", cancellationToken);
+    }
+
+    private static async Task DeleteWithRetryAsync(string path, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Delete(path);
+                return;
+            }
+            catch (IOException) when (attempt < 3)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken);
+            }
+        }
+    }
+
+    private static async Task TryDeleteIndexFamilyAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await DeleteIndexFamilyAsync(path, includeDatabase: true, cancellationToken);
+        }
+        catch (IOException)
+        {
+            // The new index is already installed. A stale backup is retried and removed on the next rebuild.
         }
     }
 }
