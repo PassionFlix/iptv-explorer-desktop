@@ -210,18 +210,24 @@
     </Style>
   </Window.Resources>
 
-  <Grid Background="#05070A">
+  <Grid x:Name="PlayerLayout" Background="#05070A" SizeChanged="OnPlayerLayoutSizeChanged">
     <Grid.RowDefinitions>
       <RowDefinition Height="*" />
-      <RowDefinition Height="Auto" />
+      <RowDefinition x:Name="ControlsRow" Height="Auto" />
     </Grid.RowDefinitions>
 
     <Border Grid.Row="0" Background="Black">
       <local:NativeVideoHost x:Name="VideoHost" />
     </Border>
 
-    <Border Grid.Row="1" Margin="10,8,10,10" Padding="16,13,16,13" CornerRadius="13"
-            Background="#101722" BorderBrush="#253248" BorderThickness="1">
+    <Border x:Name="FullscreenControlsAnchor" Grid.Row="0" Height="0" VerticalAlignment="Bottom" />
+    <Popup x:Name="FullscreenControlsPopup" PlacementTarget="{Binding ElementName=FullscreenControlsAnchor}"
+           Placement="Top" StaysOpen="True" AllowsTransparency="True" />
+
+    <Border x:Name="ControlsPanel" Grid.Row="1" Margin="10,8,10,10" Padding="16,13,16,13" CornerRadius="13"
+            Background="#101722" BorderBrush="#253248" BorderThickness="1"
+            PreviewMouseMove="OnControlsPointerMoved" PreviewMouseDown="OnControlsInteracted"
+            PreviewMouseUp="OnControlsInteracted" PreviewKeyDown="OnControlsPreviewKeyDown">
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" />
@@ -240,7 +246,8 @@
                      FontFamily="Consolas" FontSize="13" Text="00:00" />
           <Slider x:Name="PositionSlider" Grid.Column="1" Minimum="0" Maximum="1" Margin="8,0,12,0"
                   Style="{StaticResource ModernSlider}"
-                  PreviewMouseLeftButtonDown="OnSeekStarted" PreviewMouseLeftButtonUp="OnSeekCompleted" />
+                  PreviewMouseLeftButtonDown="OnSeekStarted" PreviewMouseLeftButtonUp="OnSeekCompleted"
+                  LostMouseCapture="OnSeekCaptureLost" />
           <TextBlock x:Name="DurationLabel" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"
                      Foreground="#94A3B8" FontFamily="Consolas" FontSize="13" Text="/ 00:00" />
         </Grid>
@@ -279,7 +286,8 @@
 
         <StackPanel x:Name="EpisodePanel" Grid.Row="2" Margin="0,11,0,0" Visibility="Collapsed">
           <TextBlock Style="{StaticResource SectionLabel}" Text="ÉPISODE" Margin="2,0,0,5" />
-          <ComboBox x:Name="EpisodeSelector" Style="{StaticResource TrackCombo}" SelectionChanged="OnEpisodeChanged" />
+          <ComboBox x:Name="EpisodeSelector" Style="{StaticResource TrackCombo}" SelectionChanged="OnEpisodeChanged"
+                    DropDownOpened="OnTrackDropdownOpened" DropDownClosed="OnTrackDropdownClosed" />
         </StackPanel>
 
         <Grid Grid.Row="3" Margin="0,11,0,0">
@@ -291,12 +299,14 @@
 
           <StackPanel Grid.Column="0">
             <TextBlock Style="{StaticResource SectionLabel}" Text="PISTE AUDIO" Margin="2,0,0,5" />
-            <ComboBox x:Name="AudioTracks" Style="{StaticResource TrackCombo}" SelectionChanged="OnAudioTrackChanged" />
+            <ComboBox x:Name="AudioTracks" Style="{StaticResource TrackCombo}" SelectionChanged="OnAudioTrackChanged"
+                      DropDownOpened="OnTrackDropdownOpened" DropDownClosed="OnTrackDropdownClosed" />
           </StackPanel>
 
           <StackPanel Grid.Column="2">
             <TextBlock Style="{StaticResource SectionLabel}" Text="SOUS-TITRES" Margin="2,0,0,5" />
-            <ComboBox x:Name="SubtitleTracks" Style="{StaticResource TrackCombo}" SelectionChanged="OnSubtitleTrackChanged" />
+            <ComboBox x:Name="SubtitleTracks" Style="{StaticResource TrackCombo}" SelectionChanged="OnSubtitleTrackChanged"
+                      DropDownOpened="OnTrackDropdownOpened" DropDownClosed="OnTrackDropdownClosed" />
           </StackPanel>
         </Grid>
       </Grid>
