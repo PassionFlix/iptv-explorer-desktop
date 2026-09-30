@@ -143,7 +143,8 @@ public sealed class IndexRebuildWorker(
     IProviderClientFactory clients,
     ISecretStore secrets,
     AtomicSearchIndex indexes,
-    ILogger<IndexRebuildWorker> logger) : BackgroundService
+    ILogger<IndexRebuildWorker> logger,
+    CatalogSnapshotRepository snapshots) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -166,6 +167,22 @@ public sealed class IndexRebuildWorker(
     private async Task RebuildAsync(RebuildJob job, CancellationToken cancellationToken)
     {
         var provider = await providers.GetAsync(job.ProviderKey, cancellationToken) ?? throw new InvalidOperationException("Provider is no longer available.");
+        if (provider.Type == ProviderType.Xtream)
+        {
+            var generation = await snapshots.GenerationAsync(provider.Key, cancellationToken);
+            var local = await snapshots.SearchDocumentsAsync(provider.Key, cancellationToken);
+            var localVod = local.Count(item => item.Catalog == CatalogType.Vod);
+            var localSeries = local.Count - localVod;
+            await jobs.ReportAsync(job.Id, local.Count, local.Count, "Construction depuis le snapshot local", localVod, localSeries, cancellationToken);
+            await indexes.ReplaceAsync(provider.Key, local, cancellationToken);
+            await jobs.CompleteAsync(job.Id, localVod, localSeries, cancellationToken);
+            // A concurrent successful refresh may have coalesced into this running job.
+            // Never leave the new snapshot with the old index: queue another LOCAL pass.
+            if (generation != await snapshots.GenerationAsync(provider.Key, cancellationToken))
+                await jobs.QueueAsync(provider.Key, cancellationToken);
+            return;
+        }
+        // Stalker/MAG keeps its existing category/page protocol; no speculative bulk endpoint.
         var client = await clients.CreateAsync(provider, cancellationToken);
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
         var documents = new List<SearchHit>();

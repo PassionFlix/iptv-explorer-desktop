@@ -22,7 +22,10 @@ public sealed class BridgeRouter(
     ISecretStore secrets,
     PlaybackCoordinator playback,
     AppPaths paths,
-    ILogger<BridgeRouter> logger)
+    ILogger<BridgeRouter> logger,
+    CatalogSnapshotRepository snapshots,
+    CatalogRefreshService catalogRefresh,
+    MediaDetailService details)
 {
     private static readonly JsonSerializerOptions Json = CreateJson();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
@@ -91,6 +94,9 @@ public sealed class BridgeRouter(
         "catalog.series.page" => await CatalogPage(Require<PagedCatalogRequest>(request), CatalogType.Series, cancellationToken),
         "catalog.vod.detail" => await VodDetail(Require<DetailRequest>(request), cancellationToken),
         "catalog.series.detail" => await SeriesDetail(Require<DetailRequest>(request), cancellationToken),
+        "catalog.session" => await CatalogRefresh(Require<ProviderKeyRequest>(request).ProviderKey, false, cancellationToken),
+        "catalog.refresh" => await CatalogRefresh(Require<ProviderKeyRequest>(request).ProviderKey, true, cancellationToken),
+        "catalog.status" => new { refreshedAt = await snapshots.RefreshedAtAsync(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken) },
         "index.queue" => await QueueIndex(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "index.status" => await IndexStatus(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "search.query" => await Search(Require<SearchRequest>(request), cancellationToken),
@@ -143,7 +149,7 @@ public sealed class BridgeRouter(
         var hasSearchableSelection = summaries.Any(summary =>
             summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.Selected > 0);
         var existingJob = await jobs.LatestAsync(provider.Key, cancellationToken);
-        if (hasSearchableSelection && existingJob is null)
+        if (provider.Type != ProviderType.Xtream && hasSearchableSelection && existingJob is null)
         {
             await jobs.QueueAsync(provider.Key, cancellationToken);
         }
@@ -222,7 +228,12 @@ public sealed class BridgeRouter(
 
     private async Task<object> VodDetail(DetailRequest input, CancellationToken cancellationToken)
     {
-        ValidateMediaId(input.MediaId); var client = await EnabledClient(input.ProviderKey, cancellationToken); var detail = await client.GetVodDetailsAsync(input.MediaId, cancellationToken);
+        ValidateMediaId(input.MediaId);
+        var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var detail = provider.Type == ProviderType.Xtream
+            ? await details.VodAsync(provider, input.MediaId, cancellationToken)
+            : await (await EnabledClient(input.ProviderKey, cancellationToken)).GetVodDetailsAsync(input.MediaId, cancellationToken);
         return new { detail.Id, detail.Title, poster = SafeImage(detail.Poster), detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Duration, detail.Rating, detail.Extension };
     }
     private async Task<object> SeriesDetail(DetailRequest input, CancellationToken cancellationToken)
@@ -230,11 +241,12 @@ public sealed class BridgeRouter(
         ValidateMediaId(input.MediaId);
         var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
         if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
-        var client = await clients.CreateAsync(provider, cancellationToken);
-        var detail = await client.GetSeriesDetailsAsync(input.MediaId, cancellationToken);
+        var detail = provider.Type == ProviderType.Xtream
+            ? await details.SeriesAsync(provider, input.MediaId, cancellationToken)
+            : await (await clients.CreateAsync(provider, cancellationToken)).GetSeriesDetailsAsync(input.MediaId, cancellationToken);
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
         var poster = MediaArtwork.SafeImageUrl(detail.Poster, secret);
-        await artwork.RememberDetailAsync(provider.Key, input.MediaId, poster, secret, cancellationToken);
+        if (provider.Type != ProviderType.Xtream) await artwork.RememberDetailAsync(provider.Key, input.MediaId, poster, secret, cancellationToken);
         return new { detail.Id, detail.Title, poster, detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Rating, detail.Seasons };
     }
     private async Task<object> QueueIndex(string providerKey, CancellationToken cancellationToken) { _ = await RequiredProvider(providerKey, cancellationToken); return new { jobId = await jobs.QueueAsync(providerKey, cancellationToken) }; }
@@ -248,6 +260,13 @@ public sealed class BridgeRouter(
     {
         if (input.Query.Trim().Length < 3) throw new ArgumentException("Enter at least three characters.");
         var catalog = ParseCatalog(input.CatalogType); return await search.SearchAsync(input.ProviderKey, catalog, input.Query.Trim(), Math.Clamp(input.Page, 1, 100000), Math.Clamp(input.PageSize, 1, 100), cancellationToken);
+    }
+    private async Task<object> CatalogRefresh(string key, bool manual, CancellationToken token)
+    {
+        _ = await RequiredProvider(key, token);
+        if (!manual && (await settings.GetAsync(token)).ActiveProviderKey != key)
+            throw new InvalidOperationException("The requested provider is not active.");
+        return manual ? await catalogRefresh.RefreshManualAsync(key, token) : await catalogRefresh.EnsureSessionAsync(key, token);
     }
 
     private async Task<object> HomeContent(string providerKey, CancellationToken cancellationToken)

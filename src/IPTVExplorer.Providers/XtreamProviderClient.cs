@@ -4,9 +4,14 @@ using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Providers;
 
-public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret secret, HttpClient http) : IProviderClient
+public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret secret, HttpClient http, SemaphoreSlim? requestGate = null) : IProviderClient
 {
+    private readonly SemaphoreSlim _requests = requestGate ?? new(1, 1);
     public ProviderType Type => ProviderType.Xtream;
+
+    public Task<IReadOnlyList<CatalogItem>> GetAllLiveAsync(CancellationToken cancellationToken = default) => Items("get_live_streams", CatalogType.Live, cancellationToken);
+    public Task<IReadOnlyList<CatalogItem>> GetAllVodAsync(CancellationToken cancellationToken = default) => Items("get_vod_streams", CatalogType.Vod, cancellationToken);
+    public Task<IReadOnlyList<CatalogItem>> GetAllSeriesAsync(CancellationToken cancellationToken = default) => Items("get_series", CatalogType.Series, cancellationToken);
 
     public async Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken = default)
     {
@@ -28,30 +33,21 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
     public Task<IReadOnlyList<ProviderCategory>> GetVodCategoriesAsync(CancellationToken cancellationToken = default) => Categories("get_vod_categories", cancellationToken);
     public Task<IReadOnlyList<ProviderCategory>> GetSeriesCategoriesAsync(CancellationToken cancellationToken = default) => Categories("get_series_categories", cancellationToken);
 
-    public async Task<IReadOnlyList<CatalogItem>> GetLiveAsync(string categoryId, CancellationToken cancellationToken = default) => await Items("get_live_streams", CatalogType.Live, categoryId, cancellationToken);
-    public async Task<CatalogPage<CatalogItem>> GetVodPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => Page(await Items("get_vod_streams", CatalogType.Vod, categoryId, cancellationToken), page);
-    public async Task<CatalogPage<CatalogItem>> GetSeriesPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => Page(await Items("get_series", CatalogType.Series, categoryId, cancellationToken), page);
-
-    public async Task<CatalogItem> GetVodInfoAsync(string id, CancellationToken cancellationToken = default)
-    {
-        using var document = await GetAsync("get_vod_info", cancellationToken, ("vod_id", id));
-        var root = document.RootElement;
-        var info = root.TryGetProperty("movie_data", out var movie) ? movie : root.TryGetProperty("info", out var detail) ? detail : root;
-        return JsonSupport.Item(info, CatalogType.Vod) with { Id = id };
-    }
-
-    public async Task<CatalogItem> GetSeriesInfoAsync(string id, CancellationToken cancellationToken = default)
-    {
-        using var document = await GetAsync("get_series_info", cancellationToken, ("series_id", id));
-        var root = document.RootElement;
-        var info = root.TryGetProperty("info", out var detail) ? detail : root;
-        return JsonSupport.Item(info, CatalogType.Series, useSeriesModifiedDate: true) with { Id = id };
-    }
+    // Legacy navigation methods are deliberately unavailable on the remote Xtream adapter.
+    // IProviderClient's local implementation serves these from SQLite. Stalker still implements them remotely.
+    public Task<IReadOnlyList<CatalogItem>> GetLiveAsync(string categoryId, CancellationToken cancellationToken = default) => throw LocalOnly();
+    public Task<CatalogPage<CatalogItem>> GetVodPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => throw LocalOnly();
+    public Task<CatalogPage<CatalogItem>> GetSeriesPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => throw LocalOnly();
+    public Task<CatalogItem> GetVodInfoAsync(string id, CancellationToken cancellationToken = default) => throw LocalOnly();
+    public Task<CatalogItem> GetSeriesInfoAsync(string id, CancellationToken cancellationToken = default) => throw LocalOnly();
+    private static InvalidOperationException LocalOnly() => new("Xtream navigation requires the local snapshot client.");
 
     public async Task<VodDetails> GetVodDetailsAsync(string id, CancellationToken cancellationToken = default)
     {
         using var document = await GetAsync("get_vod_info", cancellationToken, ("vod_id", id));
         var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || (!root.TryGetProperty("movie_data", out _) && !root.TryGetProperty("info", out _)))
+            throw new JsonException("Expected film detail metadata.");
         var movie = root.TryGetProperty("movie_data", out var movieData) ? movieData : root;
         var info = root.TryGetProperty("info", out var infoData) ? infoData : movie;
         return new VodDetails(
@@ -72,6 +68,8 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
     {
         using var document = await GetAsync("get_series_info", cancellationToken, ("series_id", id));
         var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("info", out var detailInfo) || detailInfo.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Expected series detail metadata.");
         var info = root.TryGetProperty("info", out var infoData) ? infoData : root;
         var seasons = new List<SeasonDetails>();
         if (root.TryGetProperty("episodes", out var episodes) && episodes.ValueKind == JsonValueKind.Object)
@@ -110,14 +108,17 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
     private async Task<IReadOnlyList<ProviderCategory>> Categories(string action, CancellationToken cancellationToken)
     {
         using var document = await GetAsync(action, cancellationToken);
+        if (document.RootElement.ValueKind != JsonValueKind.Array) throw new JsonException("Expected a category array.");
         return JsonSupport.Categories(document.RootElement);
     }
 
-    private async Task<IReadOnlyList<CatalogItem>> Items(string action, CatalogType catalog, string categoryId, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<CatalogItem>> Items(string action, CatalogType catalog, CancellationToken cancellationToken)
     {
-        using var document = await GetAsync(action, cancellationToken, ("category_id", categoryId));
+        using var document = await GetAsync(action, cancellationToken);
         if (document.RootElement.ValueKind != JsonValueKind.Array) throw new JsonException("Expected a catalog array.");
-        return document.RootElement.EnumerateArray().Select(i => JsonSupport.Item(i, catalog, useSeriesModifiedDate: true)).Where(i => i.Id.Length > 0).ToArray();
+        var items = document.RootElement.EnumerateArray().Select(i => JsonSupport.Item(i, catalog, useSeriesModifiedDate: true)).ToArray();
+        if (items.Any(item => string.IsNullOrWhiteSpace(item.Id))) throw new JsonException("Catalog contains an invalid media id.");
+        return items;
     }
 
     private async Task<JsonDocument> GetAsync(string? action, CancellationToken cancellationToken, params (string Key, string Value)[] parameters)
@@ -127,10 +128,17 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
         if (action is not null) query.Add(("action", action));
         query.AddRange(parameters);
         var uri = BuildUri(new Uri(EnsureTrailingSlash(provider.ServerUri), "player_api.php"), query);
-        using var response = await HttpRetry.SendAsync(http, () => new HttpRequestMessage(HttpMethod.Get, uri), cancellationToken);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        // Anti-ban: serialize all Xtream metadata HTTP, including body reads; never use HttpRetry.
+        await _requests.WaitAsync(cancellationToken);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        finally { _requests.Release(); }
     }
 
     private void RequireCredentials()
@@ -142,11 +150,6 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
     {
         var builder = new UriBuilder(endpoint) { Query = string.Join("&", values.Select(v => $"{Uri.EscapeDataString(v.Key)}={Uri.EscapeDataString(v.Value)}")) };
         return builder.Uri;
-    }
-    private static CatalogPage<CatalogItem> Page(IReadOnlyList<CatalogItem> items, int page)
-    {
-        const int size = 100; page = Math.Max(1, page); var totalPages = (int)Math.Ceiling(items.Count / (double)size);
-        return new CatalogPage<CatalogItem>(items.Skip((page - 1) * size).Take(size).ToArray(), page, size, items.Count, totalPages);
     }
     private static double? ParseRating(string? value) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rating) ? rating : null;
 }

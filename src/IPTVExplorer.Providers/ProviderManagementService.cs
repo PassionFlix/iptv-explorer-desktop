@@ -7,11 +7,31 @@ public sealed record ProviderUpdateInput(string Name, string ServerUrl, string? 
 
 public sealed class ProviderManagementService(IProviderRepository providers, ISecretStore secrets, IProviderClientFactory clients)
 {
+    private readonly SingleFlight<string, ProviderDiagnostic> _diagnostics = new();
+    private readonly SingleFlight<string, bool> _categorySync = new();
     public async Task<ProviderDiagnostic> DiagnoseAsync(string providerKey, CancellationToken cancellationToken = default)
+    {
+        var provider = await RequiredProvider(providerKey, cancellationToken);
+        return provider.Type == ProviderType.Xtream
+            ? await _diagnostics.RunAsync(providerKey, () => DiagnoseCoreAsync(providerKey, CancellationToken.None), cancellationToken)
+            : await DiagnoseCoreAsync(providerKey, cancellationToken);
+    }
+
+    private async Task<ProviderDiagnostic> DiagnoseCoreAsync(string providerKey, CancellationToken cancellationToken)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken);
         var client = await clients.CreateAsync(provider, cancellationToken);
         var stopwatch = Stopwatch.StartNew();
+        if (provider.Type == ProviderType.Xtream)
+        {
+            var manualAccount = await client.GetAccountInfoAsync(cancellationToken);
+            var local = await providers.GetCategorySummariesAsync(providerKey, cancellationToken);
+            return new(provider.Type, provider.ServerUri.Host, ApiName(provider), manualAccount.Authenticated,
+                local.FirstOrDefault(item => item.Catalog == CatalogType.Live)?.Total ?? 0,
+                local.FirstOrDefault(item => item.Catalog == CatalogType.Vod)?.Total ?? 0,
+                local.FirstOrDefault(item => item.Catalog == CatalogType.Series)?.Total ?? 0,
+                stopwatch.ElapsedMilliseconds, manualAccount.Authenticated ? "Compte validé · catégories locales" : "Authentification refusée", DateTimeOffset.UtcNow);
+        }
         var test = await client.TestConnectionAsync(cancellationToken);
         if (!test.Success) return new ProviderDiagnostic(provider.Type, provider.ServerUri.Host, ApiName(provider), false, 0, 0, 0, stopwatch.ElapsedMilliseconds, test.Message, DateTimeOffset.UtcNow);
         var account = await client.GetAccountInfoAsync(cancellationToken);
@@ -23,6 +43,13 @@ public sealed class ProviderManagementService(IProviderRepository providers, ISe
     }
 
     public async Task SyncCategoriesAsync(string providerKey, CancellationToken cancellationToken = default)
+    {
+        var provider = await RequiredProvider(providerKey, cancellationToken);
+        if (provider.Type != ProviderType.Xtream) { await SyncCategoriesCoreAsync(providerKey, cancellationToken); return; }
+        await _categorySync.RunAsync(providerKey, async () => { await SyncCategoriesCoreAsync(providerKey, CancellationToken.None); return true; }, cancellationToken);
+    }
+
+    private async Task SyncCategoriesCoreAsync(string providerKey, CancellationToken cancellationToken)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken);
         var client = await clients.CreateAsync(provider, cancellationToken);
@@ -44,9 +71,12 @@ public sealed class ProviderManagementService(IProviderRepository providers, ISe
         var updated = existing with { Name = input.Name.Trim(), ServerUri = uri, SecretReference = newReference };
         try
         {
-            var client = await clients.CreateAsync(updated, cancellationToken);
-            var result = await client.TestConnectionAsync(cancellationToken);
-            if (!result.Success) throw new InvalidOperationException("The updated provider could not be authenticated.");
+            if (existing.Type != ProviderType.Xtream)
+            {
+                var client = await clients.CreateAsync(updated, cancellationToken);
+                var result = await client.TestConnectionAsync(cancellationToken);
+                if (!result.Success) throw new InvalidOperationException("The updated provider could not be authenticated.");
+            }
             await providers.UpdateAsync(updated, cancellationToken);
         }
         catch
@@ -61,7 +91,7 @@ public sealed class ProviderManagementService(IProviderRepository providers, ISe
     public async Task SetEnabledAsync(string providerKey, bool enabled, CancellationToken cancellationToken = default)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken);
-        if (enabled)
+        if (enabled && provider.Type != ProviderType.Xtream)
         {
             var client = await clients.CreateAsync(provider, cancellationToken);
             var result = await client.TestConnectionAsync(cancellationToken);

@@ -38,11 +38,19 @@ public partial class App : Application
             builder.Services.AddSingleton<ISearchService, SearchService>();
             builder.Services.AddSingleton<SeriesArtworkRepository>();
             builder.Services.AddSingleton<RecentSeriesArtwork>();
+            builder.Services.AddSingleton<CatalogSnapshotRepository>();
+            builder.Services.AddSingleton(TimeProvider.System);
+            builder.Services.AddSingleton<CatalogRefreshService>();
+            builder.Services.AddSingleton<MediaDetailService>();
             builder.Services.AddSingleton<PlaybackHistoryRepository>();
             builder.Services.AddSingleton<IPlaybackHistoryRepository>(sp => sp.GetRequiredService<PlaybackHistoryRepository>());
-            builder.Services.AddSingleton<IProviderClientFactory, ProviderClientFactory>();
-            builder.Services.AddSingleton<ProviderOnboardingService>();
-            builder.Services.AddSingleton<ProviderManagementService>();
+            builder.Services.AddSingleton<IRemoteProviderClientFactory, ProviderClientFactory>();
+            builder.Services.AddSingleton<IProviderClientFactory, LocalProviderClientFactory>();
+            // Only explicit setup/settings operations receive the remote factory.
+            builder.Services.AddSingleton(sp => new ProviderOnboardingService(sp.GetRequiredService<ISecretStore>(),
+                sp.GetRequiredService<IProviderRepository>(), sp.GetRequiredService<IRemoteProviderClientFactory>()));
+            builder.Services.AddSingleton(sp => new ProviderManagementService(sp.GetRequiredService<IProviderRepository>(),
+                sp.GetRequiredService<ISecretStore>(), sp.GetRequiredService<IRemoteProviderClientFactory>()));
             builder.Services.AddSingleton<IPlayerService, LibMpvPlayerService>();
             builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();

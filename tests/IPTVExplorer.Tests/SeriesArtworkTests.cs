@@ -84,18 +84,18 @@ public sealed class SeriesArtworkTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.SendAsync("catalog.series.detail", "1");
         fixture.Handler.DetailJson = """{"info":{}}""";
-        Assert.Null((await fixture.SendAsync("catalog.series.detail", "1")).GetProperty("poster").GetString());
+        Assert.Equal(Poster, (await fixture.SendAsync("catalog.series.detail", "1")).GetProperty("poster").GetString());
         Assert.Equal(Poster, (await fixture.Cache.GetAsync(fixture.Provider.Key, "1", default))?.ImageUrl);
-        Assert.Equal(2, fixture.Handler.Actions.Count);
+        Assert.Single(fixture.Handler.Actions);
     }
 
     [Theory]
     [InlineData("403", 1)]
-    [InlineData("429", 2)]
-    [InlineData("520", 2)]
+    [InlineData("429", 1)]
+    [InlineData("520", 1)]
     [InlineData("timeout", 1)]
-    [InlineData("network", 2)]
-    public async Task DetailFailureUsesOnlyExistingTransportRetriesAndHomeNeverRetries(string error, int expectedRequests)
+    [InlineData("network", 1)]
+    public async Task DetailFailureNeverRetriesAndHomeRemainsPassive(string error, int expectedRequests)
     {
         await using var fixture = await Fixture.CreateAsync();
         fixture.Handler.Error = error;
@@ -175,15 +175,19 @@ public sealed class SeriesArtworkTests
     }
 
     [Fact]
-    public async Task RebuildWorkerUsesOnlyCatalogEndpointsAndNeverRequestsIndividualDetails()
+    public async Task RebuildWorkerUsesOnlySnapshotAndNeverRequestsProvider()
     {
         await using var fixture = await Fixture.CreateAsync();
-        fixture.Handler.ListJson = JsonSerializer.Serialize(Enumerable.Range(1, 30).Select(i => new { series_id = i, name = $"Series {i}", last_modified = (1700000000 + i).ToString() }));
+        await fixture.Snapshots.ReplaceAsync(fixture.Provider.Key, new Dictionary<CatalogType, IReadOnlyList<CatalogItem>>
+        {
+            [CatalogType.Live] = [], [CatalogType.Vod] = [],
+            [CatalogType.Series] = Enumerable.Range(1, 30).Select(i => new CatalogItem(i.ToString(), $"Series {i}", CategoryId: "1", AddedAt: DateTimeOffset.FromUnixTimeSeconds(1700000000 + i))).ToArray()
+        }, Secret, DateTimeOffset.UtcNow);
         await fixture.Database.Repository.SyncCategoriesAsync(fixture.Provider.Key, CatalogType.Series, [new("1", "Series", "SERIES")]);
         var jobs = new RebuildJobRepository(fixture.Database.Connections);
         await jobs.QueueAsync(fixture.Provider.Key);
         using var worker = new IndexRebuildWorker(jobs, fixture.Database.Repository, fixture.Factory, fixture.Secrets,
-            new AtomicSearchIndex(fixture.Database.Paths), NullLogger<IndexRebuildWorker>.Instance);
+            new AtomicSearchIndex(fixture.Database.Paths), NullLogger<IndexRebuildWorker>.Instance, fixture.Snapshots);
         await worker.StartAsync(default);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         try
@@ -200,7 +204,8 @@ public sealed class SeriesArtworkTests
         var recent = (await fixture.SendAsync("home.content")).GetProperty("recentlyAddedSeries");
         Assert.Equal(20, recent.GetArrayLength());
         Assert.All(recent.EnumerateArray(), item => Assert.Equal(JsonValueKind.Null, item.GetProperty("imageUrl").ValueKind));
-        Assert.Equal(["get_series"], fixture.Handler.Actions.ToArray());
+        Assert.Empty(fixture.Handler.Actions);
+        Assert.Equal(0, fixture.Factory.Calls);
     }
 
     [Fact]
@@ -283,6 +288,7 @@ public sealed class SeriesArtworkTests
         public required CountingFactory Factory { get; init; }
         public required Handler Handler { get; init; }
         public required SeriesArtworkRepository Cache { get; init; }
+        public CatalogSnapshotRepository Snapshots => new(Database.Connections);
         public BridgeRouter Router { get; set; } = null!;
         public static async Task<Fixture> CreateAsync()
         {
@@ -298,10 +304,12 @@ public sealed class SeriesArtworkTests
             fixture.Router = fixture.CreateRouter();
             return fixture;
         }
-        public BridgeRouter CreateRouter() => new(Database.Repository, Factory, null!, null!,
+        public BridgeRouter CreateRouter() => new(Database.Repository, new LocalProviderClientFactory(Factory, Snapshots, Database.Repository), null!, null!,
             new AppSettingsRepository(Database.Connections), new RebuildJobRepository(Database.Connections),
             new SearchService(Database.Paths), new RecentSeriesArtwork(Cache), new PlaybackHistoryRepository(Database.Connections),
-            Secrets, null!, Database.Paths, NullLogger<BridgeRouter>.Instance);
+            Secrets, null!, Database.Paths, NullLogger<BridgeRouter>.Instance, Snapshots,
+            new CatalogRefreshService(Database.Repository, Factory, Secrets, Snapshots, new RebuildJobRepository(Database.Connections), TimeProvider.System),
+            new MediaDetailService(Factory, Snapshots, Secrets, new RecentSeriesArtwork(Cache)));
         public Task IndexAsync(IEnumerable<SearchHit> documents) => new AtomicSearchIndex(Database.Paths).ReplaceAsync(Provider.Key, documents);
         public async Task<JsonElement> SendAsync(string method, string? mediaId = null)
         {
@@ -315,7 +323,7 @@ public sealed class SeriesArtworkTests
         public async ValueTask DisposeAsync() { Handler.Dispose(); await Database.DisposeAsync(); }
     }
 
-    private sealed class CountingFactory(IProviderClientFactory inner) : IProviderClientFactory
+    private sealed class CountingFactory(IProviderClientFactory inner) : IRemoteProviderClientFactory
     {
         public int Calls;
         public Task<IProviderClient> CreateAsync(ProviderRecord provider, CancellationToken cancellationToken = default)

@@ -5,6 +5,9 @@
   let sequence = 0;
   const state = { app: null, activeProviderKey: null, page: 'home', catalogs: new Map(), policyCatalog: 'live', policy: null, onboarding: null, indexTimer: null, search: { query: '', pages: { vod: 1, series: 1 } } };
   let updateReleaseUrl = '';
+  const catalogSessions = new Set();
+  let catalogRefreshBusy = false;
+  let completedIndex = null;
 
   function rawPost(method, params) {
     const id = `ui-${++sequence}`;
@@ -48,7 +51,50 @@
     state.activeProviderKey = state.app.activeProviderKey;
     renderProviderSelector(); renderProviderSettings();
     if (goHome) navigate('home'); else await renderHome();
+    // Render local data first; the background session task never blocks opening/navigation.
+    startCatalogSession();
+    loadCatalogStatus();
   }
+
+  async function startCatalogSession() {
+    const provider = activeProvider();
+    if (!provider || provider.type !== 'xtream' || catalogSessions.has(provider.key)) return;
+    catalogSessions.add(provider.key);
+    try { await applyCatalogRefresh(provider.key, await rpc('catalog.session', { providerKey: provider.key })); }
+    catch { if (state.activeProviderKey === provider.key) $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
+  }
+  async function loadCatalogStatus() {
+    const provider = activeProvider();
+    $('#refresh-catalog').disabled = catalogRefreshBusy || !provider || provider.type !== 'xtream';
+    if (!provider || provider.type !== 'xtream') { $('#catalog-refreshed-at').textContent = 'Actualisation bulk réservée à Xtream.'; return; }
+    try {
+      const status = await rpc('catalog.status', { providerKey: provider.key });
+      if (state.activeProviderKey !== provider.key) return;
+      $('#catalog-refreshed-at').textContent = `Dernière actualisation : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
+    } catch { /* Local status only; no network fallback. */ }
+  }
+  async function applyCatalogRefresh(providerKey, result) {
+    if (state.activeProviderKey !== providerKey) return;
+    const labels = { updated: 'Catalogue actualisé. Indexation locale en cours.', updatedIndexPending: 'Catalogue actualisé. Reconstruction locale disponible.', recent: 'Cache récent : aucun appel catalogue.', retained: 'Données locales conservées. Aucun nouvel essai automatique.' };
+    $('#catalog-refresh-state').textContent = labels[result.state] || 'Données locales disponibles.';
+    await loadCatalogStatus();
+    if (!result.updated || state.activeProviderKey !== providerKey) return;
+    state.catalogs.clear();
+    if (state.page === 'home') await renderHome();
+    else if (['live', 'vod', 'series'].includes(state.page)) await loadCatalogShell(state.page);
+    await pollIndex();
+  }
+  async function refreshCatalogManual() {
+    const provider = activeProvider();
+    if (!provider || provider.type !== 'xtream' || catalogRefreshBusy) return;
+    catalogRefreshBusy = true; $('#refresh-catalog').disabled = true;
+    catalogSessions.add(provider.key);
+    $('#catalog-refresh-state').textContent = 'Actualisation volontaire : Live, Films, puis Séries…';
+    try { await applyCatalogRefresh(provider.key, await rpc('catalog.refresh', { providerKey: provider.key })); }
+    catch { $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
+    finally { catalogRefreshBusy = false; await loadCatalogStatus(); }
+  }
+  $('#refresh-catalog').addEventListener('click', refreshCatalogManual);
   function renderProviderSelector() {
     const select = $('#provider-select'); select.replaceChildren();
     const empty = node('option', '', 'Aucun fournisseur actif'); empty.value = ''; select.append(empty);
@@ -345,7 +391,24 @@
 
   async function queueIndex() { if (!state.activeProviderKey) return toast('Aucun fournisseur actif.', true); try { await rpc('index.queue', { providerKey: state.activeProviderKey }); toast('Index placé en file d’attente.'); pollIndex(); } catch (error) { toast(error.message, true); } }
   $('#build-index').addEventListener('click', queueIndex); $('#home-index').addEventListener('click', queueIndex);
-  async function pollIndex() { if (state.indexTimer) window.clearTimeout(state.indexTimer); if (!state.activeProviderKey) return; try { const status = await rpc('index.status', { providerKey: state.activeProviderKey }); renderIndexStatus(status.job, $('#index-status'), status.dirty); renderIndexStatus(status.job, $('#home-index-status'), status.dirty); if (status.job && ['queued', 'running'].includes(status.job.status)) state.indexTimer = window.setTimeout(pollIndex, 1200); } catch (error) { $('#index-status').textContent = error.message; } }
+  async function pollIndex() {
+    if (state.indexTimer) window.clearTimeout(state.indexTimer);
+    const providerKey = state.activeProviderKey; if (!providerKey) return;
+    try {
+      const status = await rpc('index.status', { providerKey });
+      if (state.activeProviderKey !== providerKey) return;
+      renderIndexStatus(status.job, $('#index-status'), status.dirty); renderIndexStatus(status.job, $('#home-index-status'), status.dirty);
+      if (status.job && ['queued', 'running'].includes(status.job.status)) state.indexTimer = window.setTimeout(pollIndex, 1200);
+      else if (status.job?.status === 'completed' && completedIndex !== `${providerKey}:${status.job.id}`) {
+        completedIndex = `${providerKey}:${status.job.id}`;
+        if (state.page === 'home') {
+          const home = await rpc('home.content', { providerKey }, 'home-content');
+          if (state.activeProviderKey === providerKey && state.page === 'home') renderHomeMedia(home);
+        }
+        else if (state.page === 'search' && state.search.query) await runSearch();
+      }
+    } catch (error) { $('#index-status').textContent = error.message; }
+  }
   function renderIndexStatus(job, target, dirty = false) {
     if (target.id === 'home-index-status') { renderHomeIndexStatus(job, target, dirty); return; }
     target.replaceChildren();

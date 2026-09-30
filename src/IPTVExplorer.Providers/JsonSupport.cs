@@ -158,7 +158,8 @@ internal static class JsonSupport
         // never the release year, local indexing time, list position or an inferred creation date.
         if (added is null && catalog == CatalogType.Series && useSeriesModifiedDate)
             added = ParseAddedAt(item.Text("last_modified"));
-        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, added, Backdrop(item));
+        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, added, Backdrop(item),
+            item.Text("category_id"), item.Text("plot", "description"), item.Text("genre"), item.Text("director"), item.Text("cast", "actors"), item.Text("duration", "duration_secs"));
     }
 
     private static string? Backdrop(JsonElement item)

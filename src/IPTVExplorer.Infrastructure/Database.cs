@@ -132,6 +132,29 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
             PRIMARY KEY(provider_key,remote_id)
         );
 
+        CREATE TABLE IF NOT EXISTS catalog_snapshots (
+            provider_key TEXT PRIMARY KEY REFERENCES providers(provider_key) ON DELETE CASCADE,
+            refreshed_at TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS catalog_items (
+            provider_key TEXT NOT NULL REFERENCES catalog_snapshots(provider_key) ON DELETE CASCADE,
+            catalog_type TEXT NOT NULL CHECK (catalog_type IN ('live','vod','series')),
+            remote_id TEXT NOT NULL,
+            category_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            item_json TEXT NOT NULL,
+            PRIMARY KEY(provider_key,catalog_type,remote_id)
+        );
+        CREATE INDEX IF NOT EXISTS ix_catalog_category ON catalog_items(provider_key,catalog_type,category_id,title,remote_id);
+        CREATE TABLE IF NOT EXISTS media_details (
+            provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
+            catalog_type TEXT NOT NULL CHECK (catalog_type IN ('vod','series')),
+            remote_id TEXT NOT NULL,
+            detail_json TEXT NOT NULL,
+            PRIMARY KEY(provider_key,catalog_type,remote_id)
+        );
+
         CREATE TABLE IF NOT EXISTS playback_preferences (
             provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
             series_id TEXT NOT NULL,
@@ -150,6 +173,7 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
         );
 
         INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+        INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
         """;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)

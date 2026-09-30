@@ -24,7 +24,8 @@ public sealed record ProviderCategory(string RemoteId, string Name, string Norma
 public sealed record CategoryPolicy(CategoryPolicyMode Mode, IReadOnlySet<string> SelectedIds);
 public sealed record AccountInfo(bool Authenticated, string? Status, DateTimeOffset? ExpiresAt);
 public sealed record ConnectionTestResult(bool Success, ProviderType? DetectedType, string Message);
-public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null, DateTimeOffset? AddedAt = null, string? BackdropUrl = null);
+public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null, DateTimeOffset? AddedAt = null, string? BackdropUrl = null,
+    string? CategoryId = null, string? Plot = null, string? Genre = null, string? Director = null, string? Cast = null, string? Duration = null);
 public sealed record CatalogPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total, int TotalPages);
 public sealed record MediaRequest(CatalogType Catalog, string MediaId, string? SeriesId = null, string? Extension = null);
 public sealed record ResolvedMedia(Uri Uri, IReadOnlyDictionary<string, string>? Headers = null);

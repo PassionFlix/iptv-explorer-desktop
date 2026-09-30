@@ -2,8 +2,9 @@ using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Providers;
 
-public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecretStore secrets) : IProviderClientFactory
+public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecretStore secrets) : IRemoteProviderClientFactory
 {
+    private readonly SemaphoreSlim _xtreamRequests = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, StalkerClientCacheEntry> _stalkerClients = new(StringComparer.Ordinal);
 
     public async Task<IProviderClient> CreateAsync(ProviderRecord provider, CancellationToken cancellationToken = default)
@@ -11,7 +12,7 @@ public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecre
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken) ?? throw new InvalidOperationException("Provider credentials are unavailable.");
         return provider.Type switch
         {
-            ProviderType.Xtream => new XtreamProviderClient(provider, secret, httpClients.CreateClient("providers")),
+            ProviderType.Xtream => new XtreamProviderClient(provider, secret, httpClients.CreateClient("providers"), _xtreamRequests),
             ProviderType.Stalker => StalkerClient(provider, secret),
             _ => throw new NotSupportedException("Provider type is not supported.")
         };

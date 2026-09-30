@@ -23,12 +23,12 @@ public sealed class ProviderFixtureTests
         Assert.Single(await client.GetLiveCategoriesAsync());
         Assert.Single(await client.GetVodCategoriesAsync());
         Assert.Single(await client.GetSeriesCategoriesAsync());
-        var live = await client.GetLiveAsync("10");
+        var live = await client.GetAllLiveAsync();
         Assert.Equal("101", Assert.Single(live).Id);
-        var vod = await client.GetVodPageAsync("20", 1);
-        Assert.Equal(2, vod.Total);
-        Assert.Equal(8.4, vod.Items[0].Rating);
-        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000), vod.Items[0].AddedAt);
+        var vod = await client.GetAllVodAsync();
+        Assert.Equal(2, vod.Count);
+        Assert.Equal(8.4, vod[0].Rating);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000), vod[0].AddedAt);
         var detail = await client.GetVodDetailsAsync("201");
         Assert.Equal("Fixture Film", detail.Title);
         Assert.Equal("Fixture Director", detail.Director);
@@ -203,8 +203,8 @@ public sealed class ProviderFixtureTests
         using var http = new HttpClient(new XtreamFixtureHandler());
         var client = new XtreamProviderClient(XtreamProvider, XtreamSecret, http);
 
-        Assert.Equal("101", Assert.Single(await client.GetLiveAsync("10")).Id);
-        Assert.Equal(["201", "202"], (await client.GetVodPageAsync("20", 1)).Items.Select(item => item.Id));
+        Assert.Equal("101", Assert.Single(await client.GetAllLiveAsync()).Id);
+        Assert.Equal(["201", "202"], (await client.GetAllVodAsync()).Select(item => item.Id));
         Assert.Equal("Fixture Film", (await client.GetVodDetailsAsync("201")).Title);
         Assert.Equal("episode-501", Assert.Single(Assert.Single((await client.GetSeriesDetailsAsync("301")).Seasons).Episodes).Id);
     }
@@ -416,7 +416,7 @@ public sealed class ProviderFixtureTests
     }
 
     [Fact]
-    public async Task OnboardingHandlesLargeCategoryFixtureWithoutPersistingSecrets()
+    public async Task ExplicitCategorySyncAfterOnboardingHandlesLargeFixtureWithoutPersistingSecrets()
     {
         await using var database = await TestDatabase.CreateAsync();
         var secretStore = new InMemorySecretStore();
@@ -426,19 +426,18 @@ public sealed class ProviderFixtureTests
         var watch = Stopwatch.StartNew();
         var tested = await service.TestAsync(draft.Id);
         watch.Stop();
-        Assert.Equal(500, tested.Diagnostic?.Live);
-        Assert.Equal(200, tested.Diagnostic?.Vod);
-        Assert.Equal(100, tested.Diagnostic?.Series);
+        Assert.Equal(0, tested.Diagnostic?.Live);
+        Assert.Equal(0, tested.Diagnostic?.Vod);
+        Assert.Equal(0, tested.Diagnostic?.Series);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5));
-        var policies = new Dictionary<string, CategoryPolicyInput>
-        {
-            ["live"] = new("all", []),
-            ["vod"] = new("custom", ["vod-2"]),
-            ["series"] = new("none", [])
-        };
-        var provider = await service.SaveAsync(draft.Id, new ProviderSaveOptions(false, policies));
+        var provider = await service.SaveAsync(draft.Id, new ProviderSaveOptions(false));
+        await new ProviderManagementService(database.Repository, secretStore, factory).SyncCategoriesAsync(provider.Key);
+        await database.Repository.SaveCategoryPolicyAsync(provider.Key, CatalogType.Vod, new(CategoryPolicyMode.Custom, new HashSet<string> { "vod-2" }));
+        await database.Repository.SaveCategoryPolicyAsync(provider.Key, CatalogType.Series, new(CategoryPolicyMode.None, new HashSet<string>()));
         Assert.False(provider.Enabled);
         Assert.Equal(500, (await database.Repository.ListCategoriesAsync(provider.Key, CatalogType.Live)).Count);
+        Assert.Equal(200, (await database.Repository.ListCategoriesAsync(provider.Key, CatalogType.Vod)).Count);
+        Assert.Equal(100, (await database.Repository.ListCategoriesAsync(provider.Key, CatalogType.Series)).Count);
         Assert.Single(await database.Repository.ListCategoriesAsync(provider.Key, CatalogType.Vod), category => category.Selected);
         var storage = await database.ReadRawSqliteStorageAsync();
         Assert.NotEmpty(storage);

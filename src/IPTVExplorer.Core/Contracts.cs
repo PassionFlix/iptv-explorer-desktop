@@ -25,6 +25,9 @@ public interface IProviderRepository
 public interface IProviderClient
 {
     ProviderType Type { get; }
+    Task<IReadOnlyList<CatalogItem>> GetAllLiveAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException("Bulk catalog is not supported.");
+    Task<IReadOnlyList<CatalogItem>> GetAllVodAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException("Bulk catalog is not supported.");
+    Task<IReadOnlyList<CatalogItem>> GetAllSeriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException("Bulk catalog is not supported.");
     Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken = default);
     Task<AccountInfo> GetAccountInfoAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ProviderCategory>> GetLiveCategoriesAsync(CancellationToken cancellationToken = default);
@@ -50,6 +53,9 @@ public interface ISearchService
     Task<CatalogPage<SearchHit>> SearchAsync(string? providerKey, CatalogType catalog, string query, int page, int pageSize, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SearchHit>> RecentlyAddedAsync(string providerKey, CatalogType catalog, int limit, CancellationToken cancellationToken = default);
 }
+
+// Explicit network operations use this factory. Ordinary application reads use IProviderClientFactory.
+public interface IRemoteProviderClientFactory : IProviderClientFactory { }
 
 public interface IPlaybackHistoryRepository
 {

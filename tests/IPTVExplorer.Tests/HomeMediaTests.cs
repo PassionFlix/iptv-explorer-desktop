@@ -154,12 +154,12 @@ public sealed class HomeMediaTests
              {"series_id":3,"name":"Future series","last_modified":"9999999999999"}]
             """));
         var provider = new ProviderRecord("fixture-provider", ProviderType.Xtream, "Fixture", new Uri("https://example.invalid"), "fixture-reference");
-        var page = await new XtreamProviderClient(provider, new("fixture-user", "fixture-pass"), http).GetSeriesPageAsync("1", 1);
-        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1700000000), page.Items[0].AddedAt);
-        Assert.Equal(Poster, page.Items[0].ImageUrl);
-        Assert.Equal(Backdrop, page.Items[0].BackdropUrl);
-        Assert.Null(page.Items[1].AddedAt);
-        Assert.Null(page.Items[2].AddedAt);
+        var items = await new XtreamProviderClient(provider, new("fixture-user", "fixture-pass"), http).GetAllSeriesAsync();
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1700000000), items[0].AddedAt);
+        Assert.Equal(Poster, items[0].ImageUrl);
+        Assert.Equal(Backdrop, items[0].BackdropUrl);
+        Assert.Null(items[1].AddedAt);
+        Assert.Null(items[2].AddedAt);
     }
 
     [Fact]
@@ -170,10 +170,10 @@ public sealed class HomeMediaTests
              {"stream_id":2,"name":"Film without added","last_modified":"1700000000"}]
             """));
         var provider = new ProviderRecord("fixture-provider", ProviderType.Xtream, "Fixture", new Uri("https://example.invalid"), "fixture-reference");
-        var page = await new XtreamProviderClient(provider, new("fixture-user", "fixture-pass"), http).GetVodPageAsync("1", 1);
-        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1700000000), page.Items[0].AddedAt);
-        Assert.Equal(Backdrop, page.Items[0].BackdropUrl);
-        Assert.Null(page.Items[1].AddedAt);
+        var items = await new XtreamProviderClient(provider, new("fixture-user", "fixture-pass"), http).GetAllVodAsync();
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1700000000), items[0].AddedAt);
+        Assert.Equal(Backdrop, items[0].BackdropUrl);
+        Assert.Null(items[1].AddedAt);
     }
 
     [Fact]
