@@ -36,6 +36,8 @@ public partial class App : Application
             builder.Services.AddSingleton<RebuildJobRepository>();
             builder.Services.AddSingleton<AtomicSearchIndex>();
             builder.Services.AddSingleton<ISearchService, SearchService>();
+            builder.Services.AddSingleton<SeriesArtworkRepository>();
+            builder.Services.AddSingleton<RecentSeriesArtwork>();
             builder.Services.AddSingleton<PlaybackHistoryRepository>();
             builder.Services.AddSingleton<IPlaybackHistoryRepository>(sp => sp.GetRequiredService<PlaybackHistoryRepository>());
             builder.Services.AddSingleton<IProviderClientFactory, ProviderClientFactory>();

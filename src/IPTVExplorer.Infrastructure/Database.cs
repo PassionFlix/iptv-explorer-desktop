@@ -124,6 +124,14 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
         );
         CREATE INDEX IF NOT EXISTS ix_playback_history_provider_updated ON playback_history(provider_key,updated_at DESC);
 
+        CREATE TABLE IF NOT EXISTS series_artwork (
+            provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
+            remote_id TEXT NOT NULL,
+            image_url TEXT,
+            checked_at TEXT NOT NULL,
+            PRIMARY KEY(provider_key,remote_id)
+        );
+
         CREATE TABLE IF NOT EXISTS playback_preferences (
             provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
             series_id TEXT NOT NULL,

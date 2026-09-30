@@ -17,6 +17,7 @@ public sealed class BridgeRouter(
     IAppSettingsRepository settings,
     RebuildJobRepository jobs,
     ISearchService search,
+    RecentSeriesArtwork artwork,
     IPlaybackHistoryRepository playbackHistory,
     ISecretStore secrets,
     PlaybackCoordinator playback,
@@ -94,6 +95,7 @@ public sealed class BridgeRouter(
         "index.status" => await IndexStatus(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "search.query" => await Search(Require<SearchRequest>(request), cancellationToken),
         "home.content" => await HomeContent(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
+        "home.seriesArtwork" => await RecoverSeriesArtwork(Require<SeriesArtworkRequest>(request), cancellationToken),
         "player.open" => await playback.OpenAsync(Require<MediaReference>(request), cancellationToken),
         "player.resume" => await ResumePlayback(Require<ResumeRequest>(request), cancellationToken),
         _ => throw new NotSupportedException("Unknown bridge method.")
@@ -265,12 +267,13 @@ public sealed class BridgeRouter(
             ? await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken)
             : [];
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
+        recentSeries = await artwork.EnrichAsync(provider, secret, recentSeries, cancellationToken);
         object RecentItem(SearchHit item) => new
         {
             catalog = item.Catalog.ToString().ToLowerInvariant(),
             id = item.RemoteId,
             item.Title,
-            imageUrl = HomeArtwork.SafeUrl(item.ImageUrl, secret),
+            imageUrl = MediaArtwork.SafeImageUrl(item.ImageUrl, secret),
             addedAt = item.AddedAt
         };
         var backgrounds = inProgress.Take(1).Select(progress => HomeArtwork.Candidates(null, progress.PosterUrl, secret))
@@ -308,6 +311,20 @@ public sealed class BridgeRouter(
         return await playback.ResumeAsync(input.ProviderKey, ParseCatalog(input.CatalogType), input.MediaId, cancellationToken);
     }
 
+    private async Task<object> RecoverSeriesArtwork(SeriesArtworkRequest input, CancellationToken cancellationToken)
+    {
+        ValidateMediaId(input.MediaId);
+        var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
+        var preferences = await settings.GetAsync(cancellationToken);
+        if (!provider.Enabled || provider.Type != ProviderType.Xtream || preferences.ActiveProviderKey != provider.Key)
+            throw new InvalidOperationException("The requested provider is not active.");
+        var recent = await search.RecentlyAddedAsync(provider.Key, CatalogType.Series, RecentSeriesArtwork.Limit, cancellationToken);
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
+        var result = await artwork.EnrichAsync(provider, secret, recent, cancellationToken,
+            new Dictionary<string, string> { [input.MediaId] = input.FailedImageUrl });
+        return new { imageUrl = MediaArtwork.SafeImageUrl(result.FirstOrDefault(item => item.RemoteId == input.MediaId)?.ImageUrl, secret) };
+    }
+
     private async Task<IProviderClient> EnabledClient(string providerKey, CancellationToken cancellationToken)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken); if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled."); return await clients.CreateAsync(provider, cancellationToken);
@@ -317,12 +334,7 @@ public sealed class BridgeRouter(
     private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, category.Selected, category.Present, category.NeedsReview };
     private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating };
     private static bool IndexDirty(IEnumerable<CategorySummary> summaries) => summaries.Any(summary => summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.IndexDirty);
-    private static string? SafeImage(string? value)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo)) return null;
-        var sensitive = uri.Query.Contains("token=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("password=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("username=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("mac=", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/movie/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/series/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/live/", StringComparison.OrdinalIgnoreCase);
-        return sensitive ? null : uri.ToString();
-    }
+    private static string? SafeImage(string? value) => MediaArtwork.SafeImageUrl(value);
     private static CatalogType ParseCatalog(string value) => Enum.TryParse<CatalogType>(value, true, out var catalog) ? catalog : throw new ArgumentException("Invalid catalog type.");
     private static void ValidateCategoryId(string value) { if (string.IsNullOrWhiteSpace(value) || value.Length > 180) throw new ArgumentException("Invalid category id."); }
     private static void ValidateMediaId(string value) { if (string.IsNullOrWhiteSpace(value) || value.Length > 512 || Uri.TryCreate(value, UriKind.Absolute, out _)) throw new ArgumentException("Invalid media id."); }
@@ -352,6 +364,7 @@ public sealed class BridgeRouter(
     private sealed record CatalogRequest(string ProviderKey, string CategoryId);
     private sealed record PagedCatalogRequest(string ProviderKey, string CategoryId, int Page);
     private sealed record DetailRequest(string ProviderKey, string MediaId);
+    private sealed record SeriesArtworkRequest(string ProviderKey, string MediaId, string FailedImageUrl);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
     private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
 }

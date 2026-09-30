@@ -68,7 +68,7 @@ public sealed class SearchService(AppPaths paths) : ISearchService
                 Enum.Parse<CatalogType>(reader.GetString(0), true),
                 reader.GetString(1),
                 reader.GetString(2),
-                HomeArtwork.SafeUrl(reader.IsDBNull(3) ? null : reader.GetString(3)),
+                MediaArtwork.SafeImageUrl(reader.IsDBNull(3) ? null : reader.GetString(3)),
                 DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
                 HomeArtwork.SafeUrl(reader.IsDBNull(5) ? null : reader.GetString(5))));
         }
@@ -113,7 +113,7 @@ public sealed class AtomicSearchIndex(AppPaths paths)
             {
                 await using var insert = connection.CreateCommand(); insert.Transaction = transaction;
                 insert.CommandText = "INSERT OR REPLACE INTO search_documents(catalog_type,remote_id,title,normalized_title,image_url,added_at,backdrop_url) VALUES($catalog,$id,$title,$normalized,$image,$added,$backdrop)";
-                insert.Parameters.AddWithValue("$catalog", item.Catalog.ToString().ToLowerInvariant()); insert.Parameters.AddWithValue("$id", item.RemoteId); insert.Parameters.AddWithValue("$title", item.Title); insert.Parameters.AddWithValue("$normalized", SearchService.Normalize(item.Title)); insert.Parameters.AddWithValue("$image", (object?)HomeArtwork.SafeUrl(item.ImageUrl) ?? DBNull.Value); insert.Parameters.AddWithValue("$added", item.AddedAt is { } added ? added.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) : DBNull.Value);
+                insert.Parameters.AddWithValue("$catalog", item.Catalog.ToString().ToLowerInvariant()); insert.Parameters.AddWithValue("$id", item.RemoteId); insert.Parameters.AddWithValue("$title", item.Title); insert.Parameters.AddWithValue("$normalized", SearchService.Normalize(item.Title)); insert.Parameters.AddWithValue("$image", (object?)MediaArtwork.SafeImageUrl(item.ImageUrl) ?? DBNull.Value); insert.Parameters.AddWithValue("$added", item.AddedAt is { } added ? added.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) : DBNull.Value);
                 insert.Parameters.AddWithValue("$backdrop", (object?)HomeArtwork.SafeUrl(item.BackdropUrl) ?? DBNull.Value);
                 await insert.ExecuteNonQueryAsync(cancellationToken);
             }

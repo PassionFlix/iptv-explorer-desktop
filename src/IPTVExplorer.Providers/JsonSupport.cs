@@ -145,7 +145,10 @@ internal static class JsonSupport
             _ => item.Text("id")
         } ?? string.Empty;
         var title = item.Text("name", "title") ?? "Untitled";
-        var image = item.Text("stream_icon", "cover", "screenshot_uri", "logo");
+        var image = catalog == CatalogType.Series
+            ? new[] { "cover", "movie_image", "stream_icon", "screenshot_uri", "logo" }
+                .Select(field => item.Text(field)).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+            : item.Text("stream_icon", "cover", "screenshot_uri", "logo");
         var extension = item.Text("container_extension");
         var year = item.Text("year", "releaseDate", "releasedate");
         double? rating = double.TryParse(item.Text("rating", "rating_5based", "kinopoisk_rating"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedRating) ? parsedRating : null;

@@ -143,6 +143,7 @@ public sealed class IndexRebuildWorker(
     IProviderClientFactory clients,
     ISecretStore secrets,
     AtomicSearchIndex indexes,
+    RecentSeriesArtwork artwork,
     ILogger<IndexRebuildWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -189,7 +190,7 @@ public sealed class IndexRebuildWorker(
                         : await client.GetSeriesPageAsync(category.RemoteId, page, cancellationToken);
                     if (page == 1) estimatedTotal += result.Total;
                     documents.AddRange(result.Items.Select(item => new SearchHit(provider.Key, catalog, item.Id, item.Title,
-                        HomeArtwork.SafeUrl(item.ImageUrl, secret), item.AddedAt, HomeArtwork.SafeUrl(item.BackdropUrl, secret))));
+                        MediaArtwork.SafeImageUrl(item.ImageUrl, secret), item.AddedAt, HomeArtwork.SafeUrl(item.BackdropUrl, secret))));
                     if (catalog == CatalogType.Vod) vod += result.Items.Count; else series += result.Items.Count;
                     await jobs.ReportAsync(job.Id, documents.Count, Math.Max(documents.Count, estimatedTotal), $"{catalog} — category {categoryNumber}/{totalCategories}", vod, series, cancellationToken);
                     if (result.Items.Count == 0 || page >= result.TotalPages) break;
@@ -197,6 +198,12 @@ public sealed class IndexRebuildWorker(
                 }
             }
         }
+        // The same bounded top 20 as the home, never one detail request per catalog item.
+        var enriched = (await artwork.EnrichAsync(provider, secret, documents, cancellationToken))
+            .ToDictionary(item => item.RemoteId, StringComparer.Ordinal);
+        for (var i = 0; i < documents.Count; i++)
+            if (documents[i].Catalog == CatalogType.Series && enriched.TryGetValue(documents[i].RemoteId, out var item))
+                documents[i] = documents[i] with { ImageUrl = item.ImageUrl };
         await jobs.ReportAsync(job.Id, documents.Count, Math.Max(documents.Count, estimatedTotal), "Validating atomic index", vod, series, cancellationToken);
         await indexes.ReplaceAsync(provider.Key, documents, cancellationToken);
         await jobs.CompleteAsync(job.Id, vod, series, cancellationToken);
