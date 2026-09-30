@@ -623,13 +623,13 @@
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  filter: blur(26px) brightness(.58) saturate(.8);
-  transform: scale(1.1);
+  filter: blur(12px) brightness(.52) saturate(.85);
+  transform: scale(1.05);
   transition: opacity 1.8s ease;
 }
 
 .home-backdrop-layer.is-active {
-  opacity: .78;
+  opacity: .72;
 }
 
 .home-backdrop::after {
