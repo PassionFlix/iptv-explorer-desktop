@@ -63,7 +63,6 @@
   const titles = { home: 'Accueil', live: 'Live', vod: 'Films', series: 'Séries', search: 'Recherche', settings: 'Paramètres' };
   function navigate(page) {
     cancelGroup('view'); cancelGroup('detail'); cancelGroup('home-content');
-    for (const group of [...groups.keys()]) if (group.startsWith('home-artwork:')) cancelGroup(group);
     state.page = page;
     window.iptvHome.setActive(page === 'home');
     $$('.nav,.page').forEach(element => element.classList.remove('active'));
@@ -106,13 +105,13 @@
     $('#dashboard-name').textContent = provider.name;
     $('#dashboard-meta').textContent = provider.type.toUpperCase();
     $('#dashboard-status').className = 'status neutral';
-    $('#dashboard-status').textContent = 'Vérification…';
+    $('#dashboard-status').textContent = 'Chargement…';
     rpc('home.content', { providerKey: provider.key }, 'home-content')
       .then(renderHomeMedia)
       .catch(error => { if (!isAbort(error)) console.warn('Home media sections unavailable.'); });
     try {
       const data = await rpc('providers.dashboard', { providerKey: provider.key }, 'view');
-      $('#dashboard-status').className = `status ${data.available ? 'success' : 'error'}`; $('#dashboard-status').textContent = data.available ? 'Disponible' : 'Indisponible';
+      $('#dashboard-status').className = 'status neutral'; $('#dashboard-status').textContent = provider.enabled ? 'Activé · état réseau non vérifié' : 'Désactivé';
       renderIndexStatus(data.index, $('#home-index-status'), data.indexDirty);
       if (data.index && ['queued', 'running'].includes(data.index.status)) {
         if (state.indexTimer) window.clearTimeout(state.indexTimer);
@@ -122,7 +121,6 @@
   }
 
   function renderHomeMedia(data) {
-    for (const group of [...groups.keys()]) if (group.startsWith('home-artwork:')) cancelGroup(group);
     renderContinueWatching(data?.continueWatching || []);
     renderRecentlyAdded(data?.recentlyAddedFilms || [], 'vod', 'recent-films');
     renderRecentlyAdded(data?.recentlyAddedSeries || [], 'series', 'recent-series');
@@ -164,19 +162,7 @@
     for (const item of items) {
       const card = node('button', 'home-media-card'); card.type = 'button';
       const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: catalog, mediaId: item.id });
-      const recoverPoster = catalog === 'series' ? async () => {
-        if (!visual.isConnected || state.page !== 'home' || state.activeProviderKey !== reference.providerKey) return;
-        try {
-          const data = await rpc('home.seriesArtwork', { providerKey: reference.providerKey, mediaId: item.id, failedImageUrl: item.imageUrl }, `home-artwork:${item.id}`);
-          if (!visual.isConnected || state.page !== 'home' || state.activeProviderKey !== reference.providerKey || !data?.imageUrl || data.imageUrl === item.imageUrl) return;
-          // Replace only the fixed-ratio poster holder. No layout/carousel reset or retry loop.
-          const replacement = imageOrPlaceholder(data.imageUrl, item.title, 'home-media-poster');
-          visual.replaceWith(replacement);
-          item.imageUrl = data.imageUrl;
-        } catch { /* Optional artwork must never prevent the home from rendering. */ }
-      } : null;
-      const visual = imageOrPlaceholder(item.imageUrl, item.title, 'home-media-poster', recoverPoster);
-      card.append(visual);
+      card.append(imageOrPlaceholder(item.imageUrl, item.title, 'home-media-poster'));
       const copy = node('span', 'home-media-copy');
       copy.append(node('strong', '', item.title), node('small', '', catalog === 'series' ? 'Série' : 'Film'));
       card.append(copy);
@@ -225,10 +211,10 @@
   $$('.catalog-page .previous-page').forEach(value => value.addEventListener('click', () => { const catalog = value.closest('.catalog-page').dataset.catalog, model = state.catalogs.get(catalog); selectCatalogCategory(catalog, model.categoryId, Math.max(1, model.page - 1)); }));
   $$('.catalog-page .next-page').forEach(value => value.addEventListener('click', () => { const catalog = value.closest('.catalog-page').dataset.catalog, model = state.catalogs.get(catalog); selectCatalogCategory(catalog, model.categoryId, Math.min(model.totalPages, model.page + 1)); }));
 
-  function imageOrPlaceholder(url, title, className = '', onError = null) {
+  function imageOrPlaceholder(url, title, className = '') {
     const holder = node('div', className || 'poster');
     if (!url) { holder.textContent = title.slice(0, 1).toUpperCase(); return holder; }
-    const image = document.createElement('img'); image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.alt = ''; image.src = url; image.addEventListener('error', () => { image.remove(); holder.textContent = title.slice(0, 1).toUpperCase(); onError?.(); }, { once: true }); holder.append(image); return holder;
+    const image = document.createElement('img'); image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.alt = ''; image.src = url; image.addEventListener('error', () => { image.remove(); holder.textContent = title.slice(0, 1).toUpperCase(); }, { once: true }); holder.append(image); return holder;
   }
   function renderCatalogItems(catalog, items) {
     const grid = $(`#${catalog} .catalog-grid`), providerKey = state.activeProviderKey; grid.replaceChildren();

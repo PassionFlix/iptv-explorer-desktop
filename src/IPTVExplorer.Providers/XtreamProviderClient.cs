@@ -91,7 +91,8 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
                 seasons.Add(new SeasonDetails(seasonNumber, $"Season {seasonNumber}", list));
             }
         }
-        return new SeriesDetails(id, info.Text("name", "title") ?? "Untitled", info.Text("cover", "movie_image"), info.Text("plot", "description"), info.Text("year", "releaseDate"), info.Text("genre"), info.Text("director"), info.Text("cast", "actors"), ParseRating(info.Text("rating", "rating_5based")), seasons.OrderBy(s => s.Number).ToArray());
+        var poster = new[] { info.Text("cover"), info.Text("movie_image") }.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        return new SeriesDetails(id, info.Text("name", "title") ?? "Untitled", poster, info.Text("plot", "description"), info.Text("year", "releaseDate"), info.Text("genre"), info.Text("director"), info.Text("cast", "actors"), ParseRating(info.Text("rating", "rating_5based")), seasons.OrderBy(s => s.Number).ToArray());
     }
 
     public Task<ResolvedMedia> ResolveMediaAsync(MediaRequest request, CancellationToken cancellationToken = default)

@@ -42,6 +42,9 @@ jobs:
       - name: Test
         run: dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build --logger "console;verbosity=normal"
 
+      - name: Test passive artwork DOM (no network)
+        run: node --test tests/ui/home-artwork.test.cjs
+
       - name: Whitespace check
         shell: bash
         run: git diff --check HEAD^

@@ -95,7 +95,6 @@ public sealed class BridgeRouter(
         "index.status" => await IndexStatus(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "search.query" => await Search(Require<SearchRequest>(request), cancellationToken),
         "home.content" => await HomeContent(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
-        "home.seriesArtwork" => await RecoverSeriesArtwork(Require<SeriesArtworkRequest>(request), cancellationToken),
         "player.open" => await playback.OpenAsync(Require<MediaReference>(request), cancellationToken),
         "player.resume" => await ResumePlayback(Require<ResumeRequest>(request), cancellationToken),
         _ => throw new NotSupportedException("Unknown bridge method.")
@@ -157,16 +156,8 @@ public sealed class BridgeRouter(
         var provider = await RequiredProvider(providerKey, cancellationToken);
         var summaries = await providers.GetCategorySummariesAsync(providerKey, cancellationToken);
         var job = await jobs.LatestAsync(providerKey, cancellationToken);
-        try
-        {
-            var client = await clients.CreateAsync(provider, cancellationToken);
-            var account = await client.GetAccountInfoAsync(cancellationToken);
-            return new { provider = SafeProvider(provider), available = account.Authenticated, account = new { account.Status, expiresAt = account.ExpiresAt }, categories = summaries, index = job, indexDirty = IndexDirty(summaries) };
-        }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested && exception is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            return new { provider = SafeProvider(provider), available = false, account = (object?)null, categories = summaries, index = job, indexDirty = IndexDirty(summaries) };
-        }
+        // Home is passive: activation is local state, not proof of live network availability.
+        return new { provider = SafeProvider(provider), available = (bool?)null, account = (object?)null, categories = summaries, index = job, indexDirty = IndexDirty(summaries) };
     }
 
     private async Task<object> SyncCategories(string providerKey, CancellationToken cancellationToken)
@@ -236,8 +227,15 @@ public sealed class BridgeRouter(
     }
     private async Task<object> SeriesDetail(DetailRequest input, CancellationToken cancellationToken)
     {
-        ValidateMediaId(input.MediaId); var client = await EnabledClient(input.ProviderKey, cancellationToken); var detail = await client.GetSeriesDetailsAsync(input.MediaId, cancellationToken);
-        return new { detail.Id, detail.Title, poster = SafeImage(detail.Poster), detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Rating, detail.Seasons };
+        ValidateMediaId(input.MediaId);
+        var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var client = await clients.CreateAsync(provider, cancellationToken);
+        var detail = await client.GetSeriesDetailsAsync(input.MediaId, cancellationToken);
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
+        var poster = MediaArtwork.SafeImageUrl(detail.Poster, secret);
+        await artwork.RememberDetailAsync(provider.Key, input.MediaId, poster, secret, cancellationToken);
+        return new { detail.Id, detail.Title, poster, detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Rating, detail.Seasons };
     }
     private async Task<object> QueueIndex(string providerKey, CancellationToken cancellationToken) { _ = await RequiredProvider(providerKey, cancellationToken); return new { jobId = await jobs.QueueAsync(providerKey, cancellationToken) }; }
     private async Task<object> IndexStatus(string providerKey, CancellationToken cancellationToken)
@@ -267,7 +265,7 @@ public sealed class BridgeRouter(
             ? await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken)
             : [];
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
-        recentSeries = await artwork.EnrichAsync(provider, secret, recentSeries, cancellationToken);
+        recentSeries = await artwork.ApplyCachedAsync(providerKey, secret, recentSeries, cancellationToken);
         object RecentItem(SearchHit item) => new
         {
             catalog = item.Catalog.ToString().ToLowerInvariant(),
@@ -311,20 +309,6 @@ public sealed class BridgeRouter(
         return await playback.ResumeAsync(input.ProviderKey, ParseCatalog(input.CatalogType), input.MediaId, cancellationToken);
     }
 
-    private async Task<object> RecoverSeriesArtwork(SeriesArtworkRequest input, CancellationToken cancellationToken)
-    {
-        ValidateMediaId(input.MediaId);
-        var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
-        var preferences = await settings.GetAsync(cancellationToken);
-        if (!provider.Enabled || provider.Type != ProviderType.Xtream || preferences.ActiveProviderKey != provider.Key)
-            throw new InvalidOperationException("The requested provider is not active.");
-        var recent = await search.RecentlyAddedAsync(provider.Key, CatalogType.Series, RecentSeriesArtwork.Limit, cancellationToken);
-        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
-        var result = await artwork.EnrichAsync(provider, secret, recent, cancellationToken,
-            new Dictionary<string, string> { [input.MediaId] = input.FailedImageUrl });
-        return new { imageUrl = MediaArtwork.SafeImageUrl(result.FirstOrDefault(item => item.RemoteId == input.MediaId)?.ImageUrl, secret) };
-    }
-
     private async Task<IProviderClient> EnabledClient(string providerKey, CancellationToken cancellationToken)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken); if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled."); return await clients.CreateAsync(provider, cancellationToken);
@@ -364,7 +348,6 @@ public sealed class BridgeRouter(
     private sealed record CatalogRequest(string ProviderKey, string CategoryId);
     private sealed record PagedCatalogRequest(string ProviderKey, string CategoryId, int Page);
     private sealed record DetailRequest(string ProviderKey, string MediaId);
-    private sealed record SeriesArtworkRequest(string ProviderKey, string MediaId, string FailedImageUrl);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
     private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
 }

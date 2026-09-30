@@ -143,7 +143,6 @@ public sealed class IndexRebuildWorker(
     IProviderClientFactory clients,
     ISecretStore secrets,
     AtomicSearchIndex indexes,
-    RecentSeriesArtwork artwork,
     ILogger<IndexRebuildWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -198,12 +197,6 @@ public sealed class IndexRebuildWorker(
                 }
             }
         }
-        // The same bounded top 20 as the home, never one detail request per catalog item.
-        var enriched = (await artwork.EnrichAsync(provider, secret, documents, cancellationToken))
-            .ToDictionary(item => item.RemoteId, StringComparer.Ordinal);
-        for (var i = 0; i < documents.Count; i++)
-            if (documents[i].Catalog == CatalogType.Series && enriched.TryGetValue(documents[i].RemoteId, out var item))
-                documents[i] = documents[i] with { ImageUrl = item.ImageUrl };
         await jobs.ReportAsync(job.Id, documents.Count, Math.Max(documents.Count, estimatedTotal), "Validating atomic index", vod, series, cancellationToken);
         await indexes.ReplaceAsync(provider.Key, documents, cancellationToken);
         await jobs.CompleteAsync(job.Id, vod, series, cancellationToken);
