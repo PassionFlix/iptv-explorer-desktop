@@ -36,6 +36,22 @@ public sealed class SeriesArtworkTests
         Assert.Null(await fixture.Cache.GetAsync(fixture.Provider.Key, "1", default));
     }
 
+    [Fact]
+    public async Task HomeSerializesTypedBackdropThenPosterWithoutProviderTraffic()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.IndexAsync([new(fixture.Provider.Key, CatalogType.Series, "1", "Series 1", Poster, DateTimeOffset.FromUnixTimeSeconds(1700000000), "https://images.example.invalid/backdrop.jpg")]);
+
+        var backgrounds = (await fixture.SendAsync("home.content")).GetProperty("backgroundImages");
+        var candidates = backgrounds[0];
+        Assert.Equal("backdrop", candidates[0].GetProperty("kind").GetString());
+        Assert.Equal("https://images.example.invalid/backdrop.jpg", candidates[0].GetProperty("url").GetString());
+        Assert.Equal("poster", candidates[1].GetProperty("kind").GetString());
+        Assert.Equal(Poster, candidates[1].GetProperty("url").GetString());
+        Assert.Equal(0, fixture.Factory.Calls);
+        Assert.Empty(fixture.Handler.Actions);
+    }
+
     [Theory]
     [InlineData("cover")]
     [InlineData("movie_image")]

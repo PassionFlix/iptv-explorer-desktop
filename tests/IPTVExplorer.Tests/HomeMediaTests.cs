@@ -113,7 +113,7 @@ public sealed class HomeMediaTests
     {
         Assert.Null(HomeArtwork.SafeUrl(unsafeUrl));
         Assert.Equal(Poster, HomeArtwork.SelectBackground(unsafeUrl, Poster));
-        Assert.Equal([Poster], HomeArtwork.Candidates(unsafeUrl, Poster));
+        Assert.Equal([new HomeArtworkCandidate(Poster, HomeArtworkKind.Poster)], HomeArtwork.Candidates(unsafeUrl, Poster));
         Assert.Empty(HomeArtwork.Candidates(unsafeUrl, unsafeUrl));
     }
 
@@ -122,10 +122,18 @@ public sealed class HomeMediaTests
     {
         var secret = new ProviderSecret("fixture-account", "fixture-pass");
         Assert.Equal(Backdrop, HomeArtwork.SelectBackground(Backdrop, Poster, secret));
-        Assert.Equal([Backdrop, Poster], HomeArtwork.Candidates(Backdrop, Poster, secret));
+        Assert.Equal(
+            [new HomeArtworkCandidate(Backdrop, HomeArtworkKind.Backdrop), new HomeArtworkCandidate(Poster, HomeArtworkKind.Poster)],
+            HomeArtwork.Candidates(Backdrop, Poster, secret));
         Assert.Null(HomeArtwork.SafeUrl("https://images.example.invalid/fixture-account/image.jpg", secret));
         Assert.Null(HomeArtwork.SafeUrl("https://images.example.invalid/fixture-pass.jpg", secret));
         Assert.Null(HomeArtwork.SafeUrl("https://images.example.invalid/001122334455/image.jpg", new(MacAddress: "00:11:22:33:44:55")));
+    }
+
+    [Fact]
+    public void IdenticalBackdropAndPosterKeepsTheBackdropTypeOnly()
+    {
+        Assert.Equal([new HomeArtworkCandidate(Backdrop, HomeArtworkKind.Backdrop)], HomeArtwork.Candidates(Backdrop, Backdrop));
     }
 
     [Fact]

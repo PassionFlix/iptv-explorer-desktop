@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Cadre de validation responsive</title>
+  <style>
+    html, body { margin: 0; min-width: max-content; min-height: max-content; background: #02050a; }
+    iframe { display: block; border: 0; }
+  </style>
+</head>
+<body>
+  <iframe id="fixture" title="Fixture responsive du fond d’accueil"></iframe>
+  <script>
+    const allowed = new Set(['1920x1080', '1366x768', '800x600']);
+    const params = new URLSearchParams(location.search);
+    const size = allowed.has(params.get('size')) ? params.get('size') : '1366x768';
+    const [width, height] = size.split('x').map(Number);
+    const frame = document.querySelector('#fixture');
+    frame.width = width;
+    frame.height = height;
+    frame.src = `home-backdrop-preview.html?mode=${params.get('mode') === 'backdrop' ? 'backdrop' : 'poster'}`;
+  </script>
+</body>
+</html>

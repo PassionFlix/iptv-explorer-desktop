@@ -296,7 +296,7 @@ public sealed class BridgeRouter(
         var backgrounds = inProgress.Take(1).Select(progress => HomeArtwork.Candidates(null, progress.PosterUrl, secret))
             .Concat(recentFilms.Take(6).Select(item => HomeArtwork.Candidates(item.BackdropUrl, item.ImageUrl, secret)))
             .Concat(recentSeries.Take(6).Select(item => HomeArtwork.Candidates(item.BackdropUrl, item.ImageUrl, secret)))
-            .Where(candidates => candidates.Count > 0).DistinctBy(candidates => candidates[0]).ToArray();
+            .Where(candidates => candidates.Count > 0).DistinctBy(candidates => candidates[0].Url).ToArray();
         return new
         {
             continueWatching = inProgress.Select(progress => new

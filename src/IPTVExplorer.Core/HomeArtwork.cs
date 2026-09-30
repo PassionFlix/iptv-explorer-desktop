@@ -2,6 +2,14 @@ using System.Text.RegularExpressions;
 
 namespace IPTVExplorer.Core;
 
+public enum HomeArtworkKind
+{
+    Backdrop,
+    Poster
+}
+
+public sealed record HomeArtworkCandidate(string Url, HomeArtworkKind Kind);
+
 /// <summary>Only public, static artwork is eligible for the index and home decoration.</summary>
 public static partial class HomeArtwork
 {
@@ -25,9 +33,16 @@ public static partial class HomeArtwork
     public static string? SelectBackground(string? backdrop, string? poster, ProviderSecret? secret = null) =>
         SafeUrl(backdrop, secret) ?? SafeUrl(poster, secret);
 
-    public static IReadOnlyList<string> Candidates(string? backdrop, string? poster, ProviderSecret? secret = null) =>
-        new[] { SelectBackground(backdrop, poster, secret), SafeUrl(poster, secret) }
-            .OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
+    public static IReadOnlyList<HomeArtworkCandidate> Candidates(string? backdrop, string? poster, ProviderSecret? secret = null)
+    {
+        var safeBackdrop = SafeUrl(backdrop, secret);
+        var safePoster = SafeUrl(poster, secret);
+        var candidates = new List<HomeArtworkCandidate>(2);
+        if (safeBackdrop is not null) candidates.Add(new(safeBackdrop, HomeArtworkKind.Backdrop));
+        if (safePoster is not null && !string.Equals(safeBackdrop, safePoster, StringComparison.Ordinal))
+            candidates.Add(new(safePoster, HomeArtworkKind.Poster));
+        return candidates;
+    }
 
     [GeneratedRegex(@"(?:^|[^a-z0-9])(?:username|password|passwd|token|access_token|auth|authorization|credential|credentials|mac|api_key|apikey|signature)(?:[^a-z0-9]|$)|/(?:movie|series|live)/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitivePart();

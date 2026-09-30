@@ -619,17 +619,53 @@
 
 .home-backdrop-layer {
   position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 1.8s ease;
+}
+
+.home-backdrop-fill,
+.home-backdrop-subject {
+  position: absolute;
   width: 100%;
   height: 100%;
+  pointer-events: none;
+}
+
+.home-backdrop-fill {
   object-fit: cover;
-  opacity: 0;
   filter: blur(7px) brightness(.56) saturate(.90);
   transform: scale(1.03);
-  transition: opacity 1.8s ease;
 }
 
 .home-backdrop-layer.is-active {
   opacity: .74;
+}
+
+.home-backdrop-subject {
+  display: none;
+}
+
+.home-backdrop-layer.is-poster .home-backdrop-fill {
+  opacity: .94;
+  filter: blur(28px) brightness(.34) saturate(.82);
+  transform: scale(1.12);
+}
+
+.home-backdrop-layer.is-poster .home-backdrop-subject {
+  display: block;
+  top: 4%;
+  right: 3%;
+  left: auto;
+  width: min(42vw, 620px);
+  height: 92%;
+  object-fit: contain;
+  object-position: center right;
+  opacity: .88;
+  filter: brightness(.72) saturate(.92);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 52%) 18%, #000 38%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 52%) 18%, #000 38%, #000 88%, transparent 100%);
 }
 
 .home-backdrop::after {
@@ -654,6 +690,18 @@ html[data-theme=light] .home-backdrop::after {
 @media (max-width: 760px) {
   .home-carousel-track { gap: 10px; }
   .home-carousel-track .home-media-card { flex-basis: 136px; }
+}
+
+@media (max-width: 900px) {
+  .home-backdrop-layer.is-poster .home-backdrop-subject {
+    right: 1%;
+    width: min(48vw, 420px);
+    opacity: .58;
+  }
+}
+
+@media (max-width: 700px) {
+  .home-backdrop-layer.is-poster .home-backdrop-subject { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

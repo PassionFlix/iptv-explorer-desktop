@@ -53,6 +53,30 @@
     } catch { return null; }
   }
 
+  function candidate(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !['backdrop', 'poster'].includes(value.kind)) return null;
+    const url = safeUrl(value.url);
+    return url ? { url, kind: value.kind } : null;
+  }
+
+  function clearLayer(layer) {
+    layer.classList.remove('is-active', 'is-backdrop', 'is-poster');
+    layer.removeAttribute('data-kind');
+    layer.querySelector('.home-backdrop-fill').removeAttribute('src');
+    layer.querySelector('.home-backdrop-subject').removeAttribute('src');
+  }
+
+  function renderLayer(layer, artwork) {
+    const fill = layer.querySelector('.home-backdrop-fill');
+    const subject = layer.querySelector('.home-backdrop-subject');
+    layer.classList.toggle('is-backdrop', artwork.kind === 'backdrop');
+    layer.classList.toggle('is-poster', artwork.kind === 'poster');
+    layer.setAttribute('data-kind', artwork.kind);
+    fill.src = artwork.url;
+    if (artwork.kind === 'poster') subject.src = artwork.url;
+    else subject.removeAttribute('src');
+  }
+
   function interrupt() {
     window.clearTimeout(timer); timer = null;
     generation++;
@@ -81,7 +105,7 @@
 
   function schedule() {
     window.clearTimeout(timer); timer = null;
-    const usable = new Set(images.map(candidates => candidates.find(url => !failed.has(url))).filter(Boolean));
+    const usable = new Set(images.map(candidates => candidates.find(item => !failed.has(item.url))?.url).filter(Boolean));
     if (canRun() && !reducedMotion.matches && usable.size >= 2)
       timer = window.setTimeout(advance, 15000);
   }
@@ -94,18 +118,18 @@
       for (let tried = 0; tried < images.length; tried++) {
         const candidates = images[nextImage];
         nextImage = (nextImage + 1) % images.length;
-        for (const url of candidates) {
-          if (failed.has(url)) continue;
-          if (url === currentUrl) break;
-          const ready = await preload(url);
+        for (const artwork of candidates) {
+          if (failed.has(artwork.url)) continue;
+          if (artwork.url === currentUrl) break;
+          const ready = await preload(artwork.url);
           if (run !== generation || !canRun()) return;
-          if (!ready) { failed.add(url); continue; }
+          if (!ready) { failed.add(artwork.url); continue; }
           const incoming = currentUrl ? 1 - activeLayer : activeLayer;
-          layers[incoming].src = url;
+          renderLayer(layers[incoming], artwork);
           layers[incoming].classList.add('is-active');
           layers[1 - incoming].classList.remove('is-active');
           activeLayer = incoming;
-          currentUrl = url;
+          currentUrl = artwork.url;
           backdrop.classList.remove('hidden');
           return;
         }
@@ -135,11 +159,15 @@
       interrupt(); resume();
     },
     setBackgrounds(candidates) {
-      const next = candidates.slice(0, 13).map(values => Array.isArray(values) ? [...new Set(values.map(safeUrl).filter(Boolean))] : []).filter(values => values.length);
+      const next = Array.isArray(candidates) ? candidates.slice(0, 13).map(values => {
+        if (!Array.isArray(values)) return [];
+        const seen = new Set();
+        return values.map(candidate).filter(item => item && !seen.has(item.url) && seen.add(item.url));
+      }).filter(values => values.length) : [];
       if (JSON.stringify(next) === JSON.stringify(images)) return;
       interrupt();
       images = next; nextImage = 0; currentUrl = ''; activeLayer = 0; failed.clear();
-      layers.forEach(layer => { layer.classList.remove('is-active'); layer.removeAttribute('src'); });
+      layers.forEach(clearLayer);
       resume();
     }
   };
