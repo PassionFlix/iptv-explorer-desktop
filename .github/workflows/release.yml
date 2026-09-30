@@ -39,6 +39,17 @@ jobs:
           }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Test changelog release tooling
+        shell: pwsh
+        run: .\scripts\Test-ReleaseNotes.ps1
+
+      - name: Extract release notes from changelog
+        shell: pwsh
+        run: |
+          .\scripts\Get-ReleaseNotes.ps1 `
+            -Version '${{ steps.version.outputs.version }}' `
+            -OutputPath '.\dist\release-notes-${{ steps.version.outputs.version }}.md'
+
       - name: Install packaging tools
         shell: pwsh
         run: choco install 7zip innosetup --no-progress -y
@@ -78,4 +89,4 @@ jobs:
             ".\dist\IPTV-Explorer-${{ steps.version.outputs.version }}-win-x64.zip" `
             ".\dist\SHA256SUMS.txt" `
             --title "IPTV Explorer ${{ steps.version.outputs.version }}" `
-            --notes-file ".\docs\release-notes-v1.0.0.md"
+            --notes-file ".\dist\release-notes-${{ steps.version.outputs.version }}.md"

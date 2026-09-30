@@ -45,6 +45,10 @@ jobs:
       - name: Test passive artwork and catalog DOM (no network)
         run: node --test tests/ui/home-artwork.test.cjs tests/ui/catalog-cache.test.cjs
 
+      - name: Test changelog release tooling
+        shell: pwsh
+        run: .\scripts\Test-ReleaseNotes.ps1
+
       - name: Whitespace check
         shell: bash
         run: git diff --check HEAD^
