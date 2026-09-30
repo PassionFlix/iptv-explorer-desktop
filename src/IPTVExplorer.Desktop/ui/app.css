@@ -612,7 +612,7 @@
   grid-column: 2;
   grid-row: 1;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   overflow: hidden;
   pointer-events: none;
 }
@@ -623,21 +623,28 @@
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  filter: blur(28px) brightness(.36) saturate(.7);
+  filter: blur(26px) brightness(.58) saturate(.8);
   transform: scale(1.1);
   transition: opacity 1.8s ease;
 }
 
 .home-backdrop-layer.is-active {
-  opacity: .65;
+  opacity: .78;
 }
 
 .home-backdrop::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(110deg, rgb(5 10 19 / 80%), rgb(8 14 25 / 38%) 60%, rgb(5 10 19 / 68%)),
-    linear-gradient(0deg, var(--bg), transparent 75%);
+  background: linear-gradient(110deg, rgb(5 10 19 / 58%), rgb(8 14 25 / 26%) 60%, rgb(5 10 19 / 42%)),
+    linear-gradient(0deg, var(--bg), rgb(8 14 25 / 16%) 28%, transparent 62%);
+}
+
+/* Keep the decoration behind the existing content without a negative stacking level. */
+.shell > .sidebar,
+.shell > main {
+  position: relative;
+  z-index: 1;
 }
 
 html[data-theme=light] .home-backdrop::after {
