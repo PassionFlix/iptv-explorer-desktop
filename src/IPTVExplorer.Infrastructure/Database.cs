@@ -111,10 +111,48 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
             catalog_type TEXT NOT NULL,
             media_id TEXT NOT NULL,
             series_id TEXT,
+            title TEXT NOT NULL DEFAULT '',
+            series_title TEXT,
+            season_number INTEGER,
+            episode_number INTEGER,
+            poster_url TEXT,
+            extension TEXT,
             position_seconds REAL NOT NULL DEFAULT 0,
             duration_seconds REAL,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(provider_key,catalog_type,media_id)
+        );
+        CREATE INDEX IF NOT EXISTS ix_playback_history_provider_updated ON playback_history(provider_key,updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS series_artwork (
+            provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
+            remote_id TEXT NOT NULL,
+            image_url TEXT,
+            checked_at TEXT NOT NULL,
+            PRIMARY KEY(provider_key,remote_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS catalog_snapshots (
+            provider_key TEXT PRIMARY KEY REFERENCES providers(provider_key) ON DELETE CASCADE,
+            refreshed_at TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS catalog_items (
+            provider_key TEXT NOT NULL REFERENCES catalog_snapshots(provider_key) ON DELETE CASCADE,
+            catalog_type TEXT NOT NULL CHECK (catalog_type IN ('live','vod','series')),
+            remote_id TEXT NOT NULL,
+            category_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            item_json TEXT NOT NULL,
+            PRIMARY KEY(provider_key,catalog_type,remote_id)
+        );
+        CREATE INDEX IF NOT EXISTS ix_catalog_category ON catalog_items(provider_key,catalog_type,category_id,title,remote_id);
+        CREATE TABLE IF NOT EXISTS media_details (
+            provider_key TEXT NOT NULL REFERENCES providers(provider_key) ON DELETE CASCADE,
+            catalog_type TEXT NOT NULL CHECK (catalog_type IN ('vod','series')),
+            remote_id TEXT NOT NULL,
+            detail_json TEXT NOT NULL,
+            PRIMARY KEY(provider_key,catalog_type,remote_id)
         );
 
         CREATE TABLE IF NOT EXISTS playback_preferences (
@@ -135,6 +173,7 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
         );
 
         INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+        INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
         """;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -152,6 +191,44 @@ public sealed class DatabaseInitializer(AppPaths paths, SqliteConnectionFactory 
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureColumnAsync(connection, "provider_categories", "technical", "INTEGER NOT NULL DEFAULT 0 CHECK (technical IN (0,1))", cancellationToken);
         await using var version = connection.CreateCommand(); version.CommandText = "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,strftime('%Y-%m-%dT%H:%M:%fZ','now'))"; await version.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "title", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "series_title", "TEXT", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "season_number", "INTEGER", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "episode_number", "INTEGER", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "poster_url", "TEXT", cancellationToken);
+        await EnsureColumnAsync(connection, "playback_history", "extension", "TEXT", cancellationToken);
+        await using (var historyIndex = connection.CreateCommand())
+        {
+            historyIndex.CommandText = "CREATE INDEX IF NOT EXISTS ix_playback_history_provider_updated ON playback_history(provider_key,updated_at DESC)";
+            await historyIndex.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var playbackVersion = connection.CreateCommand())
+        {
+            playbackVersion.CommandText = "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(3,strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+            if (await playbackVersion.ExecuteNonQueryAsync(cancellationToken) == 1)
+            {
+                await using var invalidateIndexes = connection.CreateCommand();
+                invalidateIndexes.CommandText = "UPDATE provider_category_policy SET index_dirty=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE catalog_type IN ('vod','series')";
+                await invalidateIndexes.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        // The next atomic rebuild adds provider backdrops and Xtream series recency.
+        // Do not ALTER an index in use or retain any index connection during migration.
+        await using (var artworkMigration = connection.BeginTransaction())
+        {
+            await using var artworkVersion = connection.CreateCommand();
+            artworkVersion.Transaction = artworkMigration;
+            artworkVersion.CommandText = "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(4,strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+            if (await artworkVersion.ExecuteNonQueryAsync(cancellationToken) == 1)
+            {
+                await using var invalidate = connection.CreateCommand();
+                invalidate.Transaction = artworkMigration;
+                invalidate.CommandText = "UPDATE provider_category_policy SET index_dirty=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE catalog_type IN ('vod','series')";
+                await invalidate.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await artworkMigration.CommitAsync(cancellationToken);
+        }
     }
 
     private static async Task EnsureColumnAsync(SqliteConnection connection, string table, string column, string declaration, CancellationToken cancellationToken)

@@ -3,7 +3,20 @@ using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Player;
 
-public sealed class LibMpvNotInstalledException() : InvalidOperationException("Le moteur vidéo libmpv n'est pas installé.");
+public enum LibMpvFailureReason
+{
+    RuntimeMissing,
+    UnsupportedPlatform,
+    NativeDependencyMissing,
+    ArchitectureMismatch,
+    IncompatibleRuntime,
+    LoadFailure
+}
+
+public sealed class LibMpvUnavailableException(LibMpvFailureReason reason, string message) : InvalidOperationException(message)
+{
+    public LibMpvFailureReason Reason { get; } = reason;
+}
 
 public sealed class LibMpvPlayerService : IPlayerService, IDisposable
 {
@@ -30,6 +43,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
 
     internal LibMpvPlayerService(ILibMpvApiFactory apiFactory) => _apiFactory = apiFactory;
 
+    public event EventHandler? MediaLoaded;
     public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
     public event EventHandler<PlayerPositionChangedEventArgs>? PositionChanged;
     public event EventHandler<TrackListChangedEventArgs>? TrackListChanged;
@@ -47,6 +61,8 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             _playbackActive = false;
             _pausedForCache = false;
             _trackChangeResumeUntilUtc = DateTime.MinValue;
+            _position = TimeSpan.Zero;
+            _duration = null;
         }
 
         RaiseState(PlayerState.Loading);
@@ -61,9 +77,9 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             if (api.LoadFile(handle, media.Uri.AbsoluteUri, headers) < 0)
                 throw new InvalidOperationException("Impossible de charger le média dans libmpv.");
         }
-        catch (LibMpvNotInstalledException)
+        catch (LibMpvUnavailableException exception)
         {
-            RaiseState(PlayerState.Error, "Le moteur vidéo libmpv n'est pas installé.");
+            RaiseState(PlayerState.Error, exception.Message);
             throw;
         }
         catch (OperationCanceledException)
@@ -114,7 +130,13 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         RaiseState(PlayerState.Stopped);
     }
 
-    public void Seek(TimeSpan position) => SetProperty("time-pos", Math.Max(0, position.TotalSeconds).ToString("0.###", CultureInfo.InvariantCulture));
+    public void Seek(TimeSpan position)
+    {
+        var safePosition = position < TimeSpan.Zero ? TimeSpan.Zero : position;
+        SetProperty("time-pos", safePosition.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+        lock (_sync) _position = safePosition;
+        RaisePosition();
+    }
     public void SetVolume(double volume) => SetProperty("volume", Math.Clamp(volume, 0, 100).ToString("0.###", CultureInfo.InvariantCulture));
 
     public IReadOnlyList<MediaTrack> GetTracks()
@@ -242,6 +264,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
                             _pausedForCache = false;
                             userPaused = _userPaused;
                         }
+                        MediaLoaded?.Invoke(this, EventArgs.Empty);
                         RaiseState(userPaused ? PlayerState.Paused : PlayerState.Playing);
                         break;
                     }
@@ -275,12 +298,16 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
                 bool userPaused;
                 bool buffering;
                 bool autoResume;
+                bool playbackActive;
                 lock (_sync)
                 {
                     userPaused = _userPaused;
                     buffering = _pausedForCache;
+                    playbackActive = _playbackActive;
                     autoResume = paused && ShouldAutoResumeTrackChangeLocked();
                 }
+
+                if (!playbackActive) break;
 
                 if (autoResume)
                 {
@@ -305,12 +332,16 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             {
                 bool userPaused;
                 bool autoResume;
+                bool playbackActive;
                 lock (_sync)
                 {
                     _pausedForCache = buffering;
                     userPaused = _userPaused;
+                    playbackActive = _playbackActive;
                     autoResume = !buffering && ShouldAutoResumeTrackChangeLocked();
                 }
+
+                if (!playbackActive) break;
 
                 if (buffering && !userPaused)
                 {

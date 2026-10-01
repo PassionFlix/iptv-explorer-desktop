@@ -24,12 +24,23 @@ public sealed record ProviderCategory(string RemoteId, string Name, string Norma
 public sealed record CategoryPolicy(CategoryPolicyMode Mode, IReadOnlySet<string> SelectedIds);
 public sealed record AccountInfo(bool Authenticated, string? Status, DateTimeOffset? ExpiresAt);
 public sealed record ConnectionTestResult(bool Success, ProviderType? DetectedType, string Message);
-public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null);
+public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null, DateTimeOffset? AddedAt = null, string? BackdropUrl = null,
+    string? CategoryId = null, string? Plot = null, string? Genre = null, string? Director = null, string? Cast = null, string? Duration = null);
 public sealed record CatalogPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total, int TotalPages);
 public sealed record MediaRequest(CatalogType Catalog, string MediaId, string? SeriesId = null, string? Extension = null);
 public sealed record ResolvedMedia(Uri Uri, IReadOnlyDictionary<string, string>? Headers = null);
-public sealed record MediaReference(string ProviderKey, CatalogType MediaType, string MediaId, string? EpisodeId = null, string? Extension = null);
-public sealed record SearchHit(string ProviderKey, CatalogType Catalog, string RemoteId, string Title, string? ImageUrl);
+public sealed record MediaReference(
+    string ProviderKey,
+    CatalogType MediaType,
+    string MediaId,
+    string? EpisodeId = null,
+    string? Extension = null,
+    string? Title = null,
+    string? PosterUrl = null,
+    string? SeriesTitle = null,
+    int? Season = null,
+    int? Episode = null);
+public sealed record SearchHit(string ProviderKey, CatalogType Catalog, string RemoteId, string Title, string? ImageUrl, DateTimeOffset? AddedAt = null, string? BackdropUrl = null);
 public sealed record VodDetails(string Id, string Title, string? Poster, string? Plot, string? Year, string? Genre, string? Director, string? Cast, string? Duration, double? Rating, string? Extension);
 public sealed record EpisodeDetails(string Id, string Title, int? Season, int? Episode, string? Extension);
 public sealed record SeasonDetails(int Number, string Title, IReadOnlyList<EpisodeDetails> Episodes);
@@ -53,6 +64,48 @@ public sealed record MediaTrack(
     int? Height = null,
     double? Fps = null,
     bool? Hdr = null);
+
+public sealed record PlaybackProgress(
+    string ProviderKey,
+    CatalogType Catalog,
+    string MediaId,
+    string? SeriesId,
+    string Title,
+    string? SeriesTitle,
+    int? Season,
+    int? Episode,
+    string? PosterUrl,
+    string? Extension,
+    TimeSpan Position,
+    TimeSpan? Duration,
+    DateTimeOffset UpdatedAt);
+
+public static class PlaybackProgressPolicy
+{
+    public static readonly TimeSpan MinimumPosition = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan NearEndThreshold = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan NearEndMinimumDuration = TimeSpan.FromMinutes(10);
+    public const double CompletionRatio = 0.95;
+
+    public static bool HasStarted(TimeSpan position) => position >= MinimumPosition;
+
+    public static bool IsCompleted(TimeSpan position, TimeSpan? duration)
+    {
+        if (duration is not { } total || total <= TimeSpan.Zero) return false;
+        var clamped = TimeSpan.FromTicks(Math.Clamp(position.Ticks, 0, total.Ticks));
+        return clamped.TotalSeconds / total.TotalSeconds >= CompletionRatio ||
+            total >= NearEndMinimumDuration && total - clamped <= NearEndThreshold;
+    }
+
+    public static int Percentage(TimeSpan position, TimeSpan? duration)
+    {
+        if (duration is not { } total || total <= TimeSpan.Zero) return 0;
+        return (int)Math.Clamp(Math.Round(position.TotalSeconds * 100 / total.TotalSeconds), 0, 100);
+    }
+
+    public static bool ShouldList(PlaybackProgress progress) =>
+        HasStarted(progress.Position) && !IsCompleted(progress.Position, progress.Duration);
+}
 
 public static partial class ProviderKey
 {

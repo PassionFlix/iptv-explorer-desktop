@@ -4,6 +4,10 @@
   const groups = new Map();
   let sequence = 0;
   const state = { app: null, activeProviderKey: null, page: 'home', catalogs: new Map(), policyCatalog: 'live', policy: null, onboarding: null, indexTimer: null, search: { query: '', pages: { vod: 1, series: 1 } } };
+  let updateReleaseUrl = '';
+  const catalogSessions = new Set();
+  let catalogRefreshBusy = false;
+  let completedIndex = null;
 
   function rawPost(method, params) {
     const id = `ui-${++sequence}`;
@@ -40,15 +44,63 @@
   function button(text, className, action) { const value = node('button', className, text); value.type = 'button'; value.addEventListener('click', action); return value; }
   function toast(message, error = false) { const box = $('#toast'); box.textContent = message; box.style.background = error ? '#8c3242' : '#202c40'; box.classList.add('show'); window.setTimeout(() => box.classList.remove('show'), 3200); }
   function isAbort(error) { return error && error.name === 'AbortError'; }
-  function formatDate(value) { if (!value) return 'Non communiquée'; const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'Non communiquée' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date); }
   function activeProvider() { return state.app?.providers.find(provider => provider.key === state.activeProviderKey) || null; }
+  function applyThemePreference(theme) {
+    if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
+    else document.documentElement.removeAttribute('data-theme');
+  }
 
   async function refreshApp(goHome = false) {
     state.app = await rpc('app.getState');
     state.activeProviderKey = state.app.activeProviderKey;
+    const brandVersion = $('.brand small');
+    if (brandVersion) brandVersion.textContent = state.app.version ? `Desktop · ${state.app.version}` : 'Desktop';
     renderProviderSelector(); renderProviderSettings();
     if (goHome) navigate('home'); else await renderHome();
+    // Render local data first; the background session task never blocks opening/navigation.
+    startCatalogSession();
+    loadCatalogStatus();
   }
+
+  async function startCatalogSession() {
+    const provider = activeProvider();
+    if (!provider || provider.type !== 'xtream' || catalogSessions.has(provider.key)) return;
+    catalogSessions.add(provider.key);
+    try { await applyCatalogRefresh(provider.key, await rpc('catalog.session', { providerKey: provider.key })); }
+    catch { if (state.activeProviderKey === provider.key) $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
+  }
+  async function loadCatalogStatus() {
+    const provider = activeProvider();
+    $('#refresh-catalog').disabled = catalogRefreshBusy || !provider || provider.type !== 'xtream';
+    if (!provider || provider.type !== 'xtream') { $('#catalog-refreshed-at').textContent = 'Actualisation bulk réservée à Xtream.'; return; }
+    try {
+      const status = await rpc('catalog.status', { providerKey: provider.key });
+      if (state.activeProviderKey !== provider.key) return;
+      $('#catalog-refreshed-at').textContent = `Dernière actualisation : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
+    } catch { /* Local status only; no network fallback. */ }
+  }
+  async function applyCatalogRefresh(providerKey, result) {
+    if (state.activeProviderKey !== providerKey) return;
+    const labels = { updated: 'Catalogue actualisé. Indexation locale en cours.', updatedIndexPending: 'Catalogue actualisé. Reconstruction locale disponible.', recent: 'Cache récent : aucun appel catalogue.', retained: 'Données locales conservées. Aucun nouvel essai automatique.' };
+    $('#catalog-refresh-state').textContent = labels[result.state] || 'Données locales disponibles.';
+    await loadCatalogStatus();
+    if (!result.updated || state.activeProviderKey !== providerKey) return;
+    state.catalogs.clear();
+    if (state.page === 'home') await renderHome();
+    else if (['live', 'vod', 'series'].includes(state.page)) await loadCatalogShell(state.page);
+    await pollIndex();
+  }
+  async function refreshCatalogManual() {
+    const provider = activeProvider();
+    if (!provider || provider.type !== 'xtream' || catalogRefreshBusy) return;
+    catalogRefreshBusy = true; $('#refresh-catalog').disabled = true;
+    catalogSessions.add(provider.key);
+    $('#catalog-refresh-state').textContent = 'Actualisation volontaire : Live, Films, puis Séries…';
+    try { await applyCatalogRefresh(provider.key, await rpc('catalog.refresh', { providerKey: provider.key })); }
+    catch { $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
+    finally { catalogRefreshBusy = false; await loadCatalogStatus(); }
+  }
+  $('#refresh-catalog').addEventListener('click', refreshCatalogManual);
   function renderProviderSelector() {
     const select = $('#provider-select'); select.replaceChildren();
     const empty = node('option', '', 'Aucun fournisseur actif'); empty.value = ''; select.append(empty);
@@ -62,8 +114,9 @@
 
   const titles = { home: 'Accueil', live: 'Live', vod: 'Films', series: 'Séries', search: 'Recherche', settings: 'Paramètres' };
   function navigate(page) {
-    cancelGroup('view'); cancelGroup('detail');
+    cancelGroup('view'); cancelGroup('detail'); cancelGroup('home-content');
     state.page = page;
+    window.iptvHome.setActive(page === 'home');
     $$('.nav,.page').forEach(element => element.classList.remove('active'));
     $(`.nav[data-page="${page}"]`).classList.add('active');
     $(`#${page}`).classList.add('active'); $('#page-title').textContent = titles[page];
@@ -72,23 +125,104 @@
     if (page === 'settings') { renderProviderSettings(); loadPreferences(); }
   }
   $$('.nav').forEach(element => element.addEventListener('click', () => navigate(element.dataset.page)));
+  $$('[data-home-page]').forEach(element => element.addEventListener('click', () => navigate(element.dataset.homePage)));
+  $('#home-search-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const query = $('#home-search').value.trim();
+    navigate('search');
+    $('#global-search').value = query;
+    if (query.length >= 3) $('#search-form').requestSubmit();
+    else $('#global-search').focus();
+  });
+
+  window.addEventListener('iptv-update-available', event => {
+    const info = event.detail || {};
+    const url = typeof info.url === 'string' ? info.url.trim() : '';
+    if (!info.version || !url.startsWith('https://github.com/PassionFlix/iptv-explorer-desktop/releases/')) return;
+    updateReleaseUrl = url;
+    $('#update-title').textContent = `Mise à jour disponible — v${info.version}`;
+    $('#update-message').textContent = 'Une nouvelle version stable est disponible.';
+    $('#update-banner').classList.add('visible');
+  });
+  $('#update-download').addEventListener('click', () => { if (updateReleaseUrl) window.location.href = updateReleaseUrl; });
+  $('#update-later').addEventListener('click', () => $('#update-banner').classList.remove('visible'));
 
   async function renderHome() {
     const zero = $('#zero-state'), dashboard = $('#dashboard');
+    renderHomeMedia({});
     if (!state.app || state.app.providerCount === 0) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); return; }
     if (!state.activeProviderKey) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); zero.querySelector('h2').textContent = 'Aucun fournisseur actif'; zero.querySelector('p').textContent = 'Activez un fournisseur depuis Paramètres → Fournisseurs.'; return; }
     zero.classList.add('hidden'); dashboard.classList.remove('hidden');
-    const provider = activeProvider(); $('#dashboard-name').textContent = provider.name; $('#dashboard-meta').textContent = `${provider.type.toUpperCase()} · ${provider.serverUrl}`;
+    const provider = activeProvider();
+    $('#dashboard-name').textContent = provider.name;
+    $('#dashboard-meta').textContent = provider.type.toUpperCase();
+    $('#dashboard-status').className = 'status neutral';
+    $('#dashboard-status').textContent = 'Chargement…';
+    rpc('home.content', { providerKey: provider.key }, 'home-content')
+      .then(renderHomeMedia)
+      .catch(error => { if (!isAbort(error)) console.warn('Home media sections unavailable.'); });
     try {
       const data = await rpc('providers.dashboard', { providerKey: provider.key }, 'view');
-      $('#dashboard-status').className = `status ${data.available ? 'success' : 'error'}`; $('#dashboard-status').textContent = data.available ? 'Disponible' : 'Indisponible';
-      const stats = $('#dashboard-stats'); stats.replaceChildren();
-      addStat(stats, 'Compte', data.account?.status || 'Indisponible'); addStat(stats, 'Expiration', formatDate(data.account?.expiresAt));
-      for (const summary of data.categories) addStat(stats, summary.catalog === 'vod' ? 'Films' : summary.catalog === 'series' ? 'Séries' : 'Live', `${summary.selected} / ${summary.total}`);
+      $('#dashboard-status').className = 'status neutral'; $('#dashboard-status').textContent = provider.enabled ? 'Activé · état réseau non vérifié' : 'Désactivé';
       renderIndexStatus(data.index, $('#home-index-status'), data.indexDirty);
+      if (data.index && ['queued', 'running'].includes(data.index.status)) {
+        if (state.indexTimer) window.clearTimeout(state.indexTimer);
+        state.indexTimer = window.setTimeout(pollIndex, 1200);
+      }
     } catch (error) { if (!isAbort(error)) toast(error.message, true); }
   }
-  function addStat(parent, label, value) { const card = node('div', 'stat'); card.append(node('span', '', label), node('strong', '', String(value))); parent.append(card); }
+
+  function renderHomeMedia(data) {
+    renderContinueWatching(data?.continueWatching || []);
+    renderRecentlyAdded(data?.recentlyAddedFilms || [], 'vod', 'recent-films');
+    renderRecentlyAdded(data?.recentlyAddedSeries || [], 'series', 'recent-series');
+    window.iptvHome.setBackgrounds(data?.backgroundImages || []);
+  }
+
+  function renderContinueWatching(items) {
+    const section = $('#continue-watching'), grid = $('#continue-watching-items');
+    grid.replaceChildren();
+    section.classList.toggle('hidden', items.length === 0);
+    for (const item of items) {
+      const card = node('button', 'home-media-card'); card.type = 'button';
+      const visual = imageOrPlaceholder(item.posterUrl, item.title, 'home-media-poster');
+      if (item.durationSeconds > 0) {
+        const progress = node('span', 'home-media-progress');
+        const fill = node('i'); fill.style.width = `${Math.min(100, Math.max(0, item.percentage || 0))}%`;
+        progress.append(fill); visual.append(progress);
+      }
+      const copy = node('span', 'home-media-copy');
+      copy.append(node('strong', '', item.title));
+      if (item.catalog === 'series') {
+        const code = item.season && item.episode ? `S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}` : item.episodeTitle || 'Épisode';
+        copy.append(node('small', '', code));
+      }
+      copy.append(node('span', 'home-media-action', item.durationSeconds > 0 ? `${item.percentage} % · Reprendre` : 'Reprendre'));
+      card.append(visual, copy);
+      card.addEventListener('click', async () => {
+        try { await rpc('player.resume', { providerKey: item.providerKey, catalogType: item.catalog, mediaId: item.mediaId }, 'player'); }
+        catch (error) { if (!isAbort(error)) toast(error.message, true); }
+      });
+      grid.append(card);
+    }
+  }
+
+  function renderRecentlyAdded(items, catalog, sectionId) {
+    const section = $(`#${sectionId}`), grid = $(`#${sectionId}-items`);
+    grid.replaceChildren();
+    section.classList.toggle('hidden', items.length === 0);
+    for (const item of items) {
+      const card = node('button', 'home-media-card'); card.type = 'button';
+      const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: catalog, mediaId: item.id });
+      card.append(imageOrPlaceholder(item.imageUrl, item.title, 'home-media-poster'));
+      const copy = node('span', 'home-media-copy');
+      copy.append(node('strong', '', item.title), node('small', '', catalog === 'series' ? 'Série' : 'Film'));
+      card.append(copy);
+      card.addEventListener('click', () => openDetail(catalog, { id: item.id, title: item.title, imageUrl: item.imageUrl }, reference));
+      grid.append(card);
+    }
+    window.iptvHome.resetCarousel(grid);
+  }
 
   async function loadCatalogShell(catalog) {
     const section = $(`#${catalog}`), list = section.querySelector('.category-list'); list.replaceChildren();
@@ -157,7 +291,7 @@
       const copy = node('div'); const metadata = node('div', 'metadata'); [detail.year, detail.genre, detail.duration, detail.rating ? `★ ${detail.rating}` : null].filter(Boolean).forEach(value => metadata.append(node('span', '', String(value))));
       copy.append(metadata, node('p', 'plot', detail.plot || 'Aucun résumé communiqué.'));
       if (detail.director) copy.append(node('p', 'muted', `Réalisation : ${detail.director}`)); if (detail.cast) copy.append(node('p', 'muted', `Distribution : ${detail.cast}`));
-      if (catalog === 'vod') copy.append(button('▶ Lire', 'primary', () => openPlayer({ ...reference, mediaId: detail.id, extension: detail.extension }, detail.title)));
+      if (catalog === 'vod') copy.append(button('▶ Lire', 'primary', () => openPlayer({ ...reference, mediaId: detail.id, extension: detail.extension, title: detail.title, posterUrl: detail.poster }, detail.title)));
       layout.append(copy); content.append(layout);
       if (catalog === 'series') renderSeasons(content, detail, reference.providerKey);
     } catch (error) { if (!isAbort(error)) content.replaceChildren(node('p', 'form-error', error.message)); }
@@ -171,7 +305,11 @@
       const list = node('div', 'episode-list');
       season.episodes.forEach(episode => {
         const row = node('div', 'episode'); const number = episode.episode ? `E${String(episode.episode).padStart(2, '0')} — ` : '';
-        row.append(node('span', '', `${number}${episode.title}`), button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension }, episode.title))); list.append(row);
+        const main = node('div', 'episode-main');
+        const actions = node('div', 'episode-actions');
+        actions.append(button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension, title: episode.title, posterUrl: detail.poster, seriesTitle: detail.title, season: episode.season ?? season.number, episode: episode.episode }, episode.title)));
+        main.append(node('span', 'episode-info', `${number}${episode.title}`), actions);
+        row.append(main); list.append(row);
       });
       block.append(list); section.append(block);
     });
@@ -213,7 +351,13 @@
   function resetOnboarding() { onboardingForm.reset(); onboardingForm.elements.password.value = ''; onboardingForm.elements.macAddress.value = ''; state.onboarding = { step: 1, draft: null, catalog: 'live', policies: {} }; $('#onboarding-error').textContent = ''; $('#onboarding-diagnostic').replaceChildren(); updateCredentialFields(); setWizardStep(1); }
   $$('.open-onboarding').forEach(value => value.addEventListener('click', () => { resetOnboarding(); onboardingDialog.showModal(); }));
   onboardingForm.elements.providerType.addEventListener('change', updateCredentialFields);
-  function updateCredentialFields() { const type = onboardingForm.elements.providerType.value; $('#xtream-fields').style.display = type === 'stalker' ? 'none' : 'grid'; $('#stalker-fields').style.display = type === 'xtream' ? 'none' : 'block'; }
+  function onboardingExplanation(type) {
+    type = String(type || '').toLowerCase();
+    if (type === 'xtream') return 'Le test effectue un contrôle minimal. Le catalogue sera chargé localement après activation du fournisseur.';
+    if (type === 'stalker') return 'Le test vérifie la session Stalker/MAG et charge les catégories disponibles.';
+    return 'Le test détecte le type avec le minimum d’appels nécessaire. Un catalogue Xtream sera chargé localement après activation.';
+  }
+  function updateCredentialFields() { const type = onboardingForm.elements.providerType.value; $('#xtream-fields').style.display = type === 'stalker' ? 'none' : 'grid'; $('#stalker-fields').style.display = type === 'xtream' ? 'none' : 'block'; $('#onboarding-test-explanation').textContent = onboardingExplanation(type); }
   function setWizardStep(step) { state.onboarding.step = step; $$('.wizard-step').forEach(value => value.classList.toggle('active', Number(value.dataset.step) === step)); $$('#onboarding-dialog .steps span').forEach((value, index) => { value.classList.toggle('current', index + 1 === step); value.classList.toggle('done', index + 1 < step); }); $('#wizard-previous').disabled = step === 1; $('#wizard-next').classList.toggle('hidden', step >= 5); $('#save-provider').classList.toggle('hidden', step !== 5); if (step === 4) renderOnboardingCategories(); if (step === 5) $('#onboarding-summary').textContent = `${state.onboarding.draft.name} · ${state.onboarding.draft.detectedType.toUpperCase()} · ${state.onboarding.draft.credentialStatus}`; }
   $('#wizard-previous').addEventListener('click', () => setWizardStep(Math.max(1, state.onboarding.step - 1)));
   $('#wizard-next').addEventListener('click', () => { const step = state.onboarding.step; if (step === 1 && !validateStep($('.wizard-step[data-step="1"]'))) return; if (step === 2 && !validateCredentials()) return; if (step === 3 && !state.onboarding.draft?.detectedType) { $('#onboarding-error').textContent = 'Testez la connexion avant de continuer.'; return; } setWizardStep(Math.min(5, step + 1)); });
@@ -228,16 +372,30 @@
       const tested = await rpc('providers.test', { draftId: draft.id }, 'onboarding');
       if (!tested.detectedType) throw new Error(tested.message || 'Identifiants refusés.'); state.onboarding.draft = tested;
       for (const catalog of ['live', 'vod', 'series']) { const items = tested.categories[catalog] || []; state.onboarding.policies[catalog] = { items, selected: new Set(items.map(item => item.remoteId)), mode: 'all' }; }
-      diagnostic.replaceChildren(renderDiagnostic(tested.diagnostic)); toast('Connexion validée.');
+      $('#onboarding-test-explanation').textContent = onboardingExplanation(tested.detectedType);
+      const success = String(tested.detectedType).toLowerCase() === 'xtream'
+        ? 'Connexion validée. Le catalogue sera chargé localement après activation du fournisseur.'
+        : 'Connexion validée. Les catégories disponibles peuvent être sélectionnées avant l’enregistrement.';
+      diagnostic.replaceChildren(renderDiagnostic(tested.diagnostic, true), node('p', 'hint', success)); toast('Connexion validée.');
     } catch (error) { if (!isAbort(error)) diagnostic.replaceChildren(node('p', 'form-error', error.message)); }
     finally { $('#test-provider').disabled = false; }
   });
-  function renderDiagnostic(data) { const grid = node('div', 'diagnostic-grid'); if (!data) return grid; [[data.type, 'Type détecté'], [data.authenticated ? '✓' : '✕', `Compte ${data.account}`], [data.live, 'Live'], [data.vod, 'Films'], [data.series, 'Séries'], [`${data.latencyMs} ms`, 'Latence']].forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); }); if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails)); return grid; }
+  function renderDiagnostic(data, onboarding = false) { const grid = node('div', 'diagnostic-grid'); if (!data) return grid; const values = [[data.type, 'Type détecté'], [data.authenticated ? '✓' : '✕', `Compte ${data.account}`]]; const xtreamOnboarding = onboarding && String(data.type).toLowerCase() === 'xtream'; if (!xtreamOnboarding) values.push([data.live, 'Live'], [data.vod, 'Films'], [data.series, 'Séries']); values.push([`${data.latencyMs} ms`, 'Latence']); values.forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); }); if (xtreamOnboarding) grid.append(node('span', 'muted', 'Catalogue local après activation')); if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails)); return grid; }
   $$('.onboarding-tabs button').forEach(value => value.addEventListener('click', () => { $$('.onboarding-tabs button').forEach(buttonValue => buttonValue.classList.remove('active')); value.classList.add('active'); state.onboarding.catalog = value.dataset.onboardingCatalog; renderOnboardingCategories(); }));
   $('#onboarding-filter').addEventListener('input', renderOnboardingCategories);
   $('#onboarding-all').addEventListener('click', () => { const model = state.onboarding.policies[state.onboarding.catalog]; model.selected = new Set(model.items.map(item => item.remoteId)); model.mode = 'all'; renderOnboardingCategories(); });
   $('#onboarding-none').addEventListener('click', () => { const model = state.onboarding.policies[state.onboarding.catalog]; model.selected.clear(); model.mode = 'none'; renderOnboardingCategories(); });
-  function renderOnboardingCategories() { const model = state.onboarding.policies[state.onboarding.catalog], container = $('#onboarding-categories'); container.replaceChildren(); if (!model) return; renderPolicyRows(container, model, $('#onboarding-filter').value); $('#onboarding-count').textContent = `${model.selected.size} / ${model.items.length}`; }
+  function renderOnboardingCategories() {
+    const model = state.onboarding.policies[state.onboarding.catalog], container = $('#onboarding-categories');
+    const xtream = String(state.onboarding.draft?.detectedType || '').toLowerCase() === 'xtream';
+    $('#onboarding-category-selection').classList.toggle('hidden', xtream);
+    $('#onboarding-category-info').classList.toggle('hidden', !xtream);
+    $('#onboarding-category-info').textContent = xtream ? 'Connexion validée. Live, Films et Séries seront synchronisés localement lors de l’activation.' : '';
+    container.replaceChildren(); $('#onboarding-count').textContent = '';
+    if (xtream || !model) return;
+    renderPolicyRows(container, model, $('#onboarding-filter').value);
+    $('#onboarding-count').textContent = `${model.selected.size} / ${model.items.length}`;
+  }
   onboardingForm.addEventListener('submit', async event => { event.preventDefault(); const policies = {}; for (const catalog of ['live', 'vod', 'series']) { const model = state.onboarding.policies[catalog]; policies[catalog] = { mode: model.mode, selectedIds: [...model.selected] }; } try { await rpc('providers.save', { draftId: state.onboarding.draft.id, enable: onboardingForm.elements.enableProvider.checked, policies }); onboardingDialog.close(); await refreshApp(true); toast('Fournisseur enregistré.'); } catch (error) { $('#onboarding-error').textContent = error.message; } });
 
   function renderProviderSettings() {
@@ -263,11 +421,69 @@
 
   async function queueIndex() { if (!state.activeProviderKey) return toast('Aucun fournisseur actif.', true); try { await rpc('index.queue', { providerKey: state.activeProviderKey }); toast('Index placé en file d’attente.'); pollIndex(); } catch (error) { toast(error.message, true); } }
   $('#build-index').addEventListener('click', queueIndex); $('#home-index').addEventListener('click', queueIndex);
-  async function pollIndex() { if (state.indexTimer) window.clearTimeout(state.indexTimer); if (!state.activeProviderKey) return; try { const status = await rpc('index.status', { providerKey: state.activeProviderKey }); renderIndexStatus(status.job, $('#index-status'), status.dirty); renderIndexStatus(status.job, $('#home-index-status'), status.dirty); if (status.job && ['queued', 'running'].includes(status.job.status)) state.indexTimer = window.setTimeout(pollIndex, 1200); } catch (error) { $('#index-status').textContent = error.message; } }
-  function renderIndexStatus(job, target, dirty = false) { target.replaceChildren(); if (!job) { target.textContent = 'Pas construit'; return; } const labels = { queued: 'En attente', running: 'En cours', completed: dirty ? 'À synchroniser' : 'Prêt', failed: 'Échec', interrupted: 'Interrompu' }; target.append(node('strong', '', labels[job.status] || job.status), node('p', 'muted', job.label || '')); if (job.total > 0) { const track = node('div', 'progress-track'); const fill = node('span'); fill.style.width = `${Math.min(100, Math.round(job.current * 100 / job.total))}%`; track.append(fill); target.append(track, node('p', '', `${job.current.toLocaleString()} / ${job.total.toLocaleString()} · Films ${job.vodItems.toLocaleString()} · Séries ${job.seriesItems.toLocaleString()}`)); } if (job.error) target.append(node('p', 'form-error', job.error)); }
+  async function pollIndex() {
+    if (state.indexTimer) window.clearTimeout(state.indexTimer);
+    const providerKey = state.activeProviderKey; if (!providerKey) return;
+    try {
+      const status = await rpc('index.status', { providerKey });
+      if (state.activeProviderKey !== providerKey) return;
+      renderIndexStatus(status.job, $('#index-status'), status.dirty); renderIndexStatus(status.job, $('#home-index-status'), status.dirty);
+      if (status.job && ['queued', 'running'].includes(status.job.status)) state.indexTimer = window.setTimeout(pollIndex, 1200);
+      else if (status.job?.status === 'completed' && completedIndex !== `${providerKey}:${status.job.id}`) {
+        completedIndex = `${providerKey}:${status.job.id}`;
+        if (state.page === 'home') {
+          const home = await rpc('home.content', { providerKey }, 'home-content');
+          if (state.activeProviderKey === providerKey && state.page === 'home') renderHomeMedia(home);
+        }
+        else if (state.page === 'search' && state.search.query) await runSearch();
+      }
+    } catch (error) { $('#index-status').textContent = error.message; }
+  }
+  function renderIndexStatus(job, target, dirty = false) {
+    if (target.id === 'home-index-status') { renderHomeIndexStatus(job, target, dirty); return; }
+    target.replaceChildren();
+    if (!job) { target.textContent = 'Pas construit'; return; }
+    const labels = { queued: 'En attente', running: 'En cours', completed: dirty ? 'À synchroniser' : 'Prêt', failed: 'Échec', interrupted: 'Interrompu' };
+    target.append(node('strong', '', labels[job.status] || job.status), node('p', 'muted', job.label || ''));
+    if (job.total > 0) {
+      const track = node('div', 'progress-track'); const fill = node('span');
+      fill.style.width = `${Math.min(100, Math.round(job.current * 100 / job.total))}%`;
+      track.append(fill);
+      target.append(track, node('p', '', `${job.current.toLocaleString()} / ${job.total.toLocaleString()} · Films ${job.vodItems.toLocaleString()} · Séries ${job.seriesItems.toLocaleString()}`));
+    }
+    if (job.error) target.append(node('p', 'form-error', job.error));
+  }
+  function renderHomeIndexStatus(job, target, dirty) {
+    const badge = $('#home-index-state'), rebuild = $('#home-index');
+    target.replaceChildren();
+    if (!job) {
+      badge.className = 'status neutral'; badge.textContent = 'Pas construit';
+      rebuild.textContent = 'Construire l’index';
+      target.append(node('p', 'muted', 'Aucun index local disponible.'));
+      return;
+    }
 
-  async function loadPreferences() { try { const preferences = await rpc('settings.get'); const form = $('#preferences-form'); for (const key of ['interfaceLanguage', 'theme', 'audioLanguage', 'secondaryAudioLanguage', 'subtitleLanguage']) if (form.elements[key]) form.elements[key].value = preferences[key] || 'auto'; form.elements.automaticForcedSubtitles.checked = preferences.automaticForcedSubtitles; document.documentElement.dataset.theme = preferences.theme === 'system' ? '' : preferences.theme; } catch { } }
-  $('#preferences-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const preferences = { activeProviderKey: state.activeProviderKey, interfaceLanguage: form.elements.interfaceLanguage.value, theme: form.elements.theme.value, audioLanguage: form.elements.audioLanguage.value || 'auto', secondaryAudioLanguage: form.elements.secondaryAudioLanguage.value || 'auto', subtitleLanguage: form.elements.subtitleLanguage.value || 'auto', automaticForcedSubtitles: form.elements.automaticForcedSubtitles.checked }; try { await rpc('settings.save', preferences); document.documentElement.dataset.theme = preferences.theme === 'system' ? '' : preferences.theme; toast('Préférences enregistrées.'); } catch (error) { toast(error.message, true); } });
+    const labels = { queued: 'En attente', running: 'En cours', completed: dirty ? 'À synchroniser' : 'Prêt', failed: 'Échec', interrupted: 'Interrompu' };
+    const tones = { queued: 'warning', running: 'warning', completed: dirty ? 'warning' : 'success', failed: 'error', interrupted: 'warning' };
+    badge.className = `status ${tones[job.status] || 'neutral'}`;
+    badge.textContent = labels[job.status] || job.status;
+    rebuild.textContent = 'Reconstruire l’index';
+
+    const current = Number(job.current || 0), total = Number(job.total || 0);
+    const vodItems = Number(job.vodItems || 0), seriesItems = Number(job.seriesItems || 0);
+    target.append(node('strong', 'home-index-count', `${current.toLocaleString()} contenus`));
+    target.append(node('p', 'muted home-index-breakdown', `${vodItems.toLocaleString()} films · ${seriesItems.toLocaleString()} séries`));
+    if (total > 0) {
+      const track = node('div', 'progress-track'); const fill = node('span');
+      fill.style.width = `${Math.min(100, Math.round(current * 100 / total))}%`;
+      track.append(fill); target.append(track);
+    }
+    if (job.status !== 'completed' && job.label) target.append(node('p', 'muted home-index-label', job.label));
+    if (job.error) target.append(node('p', 'form-error', job.error));
+  }
+
+  async function loadPreferences() { try { const preferences = await rpc('settings.get'); const form = $('#preferences-form'); for (const key of ['interfaceLanguage', 'theme', 'audioLanguage', 'secondaryAudioLanguage', 'subtitleLanguage']) if (form.elements[key]) form.elements[key].value = preferences[key] || 'auto'; form.elements.automaticForcedSubtitles.checked = preferences.automaticForcedSubtitles; applyThemePreference(preferences.theme); } catch { } }
+  $('#preferences-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const preferences = { activeProviderKey: state.activeProviderKey, interfaceLanguage: form.elements.interfaceLanguage.value, theme: form.elements.theme.value, audioLanguage: form.elements.audioLanguage.value || 'auto', secondaryAudioLanguage: form.elements.secondaryAudioLanguage.value || 'auto', subtitleLanguage: form.elements.subtitleLanguage.value || 'auto', automaticForcedSubtitles: form.elements.automaticForcedSubtitles.checked }; try { await rpc('settings.save', preferences); applyThemePreference(preferences.theme); toast('Préférences enregistrées.'); } catch (error) { toast(error.message, true); } });
 
   $$('.close-dialog').forEach(value => value.addEventListener('click', () => value.closest('dialog').close()));
   refreshApp().then(loadPreferences).catch(error => toast(error.message, true));

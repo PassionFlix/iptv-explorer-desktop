@@ -21,9 +21,6 @@
       mark.appendChild(image);
     }
 
-    const subtitle = document.querySelector('.brand small');
-    if (subtitle) subtitle.textContent = 'Desktop · 1.0.0';
-
     const orb = document.querySelector('.orb');
     if (orb && !orb.querySelector('img')) {
       orb.textContent = '';
@@ -35,31 +32,9 @@
     }
   }
 
-  function installAutomaticIndexPolling() {
-    const status = document.querySelector('#home-index-status');
-    const button = document.querySelector('#home-index');
-    if (!status || !button) return;
-
-    const ensurePolling = () => {
-      const text = status.textContent || '';
-      const active = text.includes('En attente') || text.includes('En cours');
-      if (active && status.dataset.autoPolling !== 'true') {
-        status.dataset.autoPolling = 'true';
-        button.click();
-      } else if (!active) {
-        delete status.dataset.autoPolling;
-      }
-    };
-
-    const observer = new MutationObserver(ensurePolling);
-    observer.observe(status, { childList: true, subtree: true, characterData: true });
-    ensurePolling();
-  }
-
   function initialize() {
     installStylesheet();
     installBranding();
-    installAutomaticIndexPolling();
     document.documentElement.classList.add('desktop-polished');
   }
 

@@ -17,9 +17,14 @@ public sealed class BridgeRouter(
     IAppSettingsRepository settings,
     RebuildJobRepository jobs,
     ISearchService search,
+    RecentSeriesArtwork artwork,
+    IPlaybackHistoryRepository playbackHistory,
+    ISecretStore secrets,
     PlaybackCoordinator playback,
-    AppPaths paths,
-    ILogger<BridgeRouter> logger)
+    ILogger<BridgeRouter> logger,
+    CatalogSnapshotRepository snapshots,
+    CatalogRefreshService catalogRefresh,
+    MediaDetailService details)
 {
     private static readonly JsonSerializerOptions Json = CreateJson();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
@@ -88,10 +93,15 @@ public sealed class BridgeRouter(
         "catalog.series.page" => await CatalogPage(Require<PagedCatalogRequest>(request), CatalogType.Series, cancellationToken),
         "catalog.vod.detail" => await VodDetail(Require<DetailRequest>(request), cancellationToken),
         "catalog.series.detail" => await SeriesDetail(Require<DetailRequest>(request), cancellationToken),
+        "catalog.session" => await CatalogRefresh(Require<ProviderKeyRequest>(request).ProviderKey, false, cancellationToken),
+        "catalog.refresh" => await CatalogRefresh(Require<ProviderKeyRequest>(request).ProviderKey, true, cancellationToken),
+        "catalog.status" => new { refreshedAt = await snapshots.RefreshedAtAsync(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken) },
         "index.queue" => await QueueIndex(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "index.status" => await IndexStatus(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "search.query" => await Search(Require<SearchRequest>(request), cancellationToken),
+        "home.content" => await HomeContent(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "player.open" => await playback.OpenAsync(Require<MediaReference>(request), cancellationToken),
+        "player.resume" => await ResumePlayback(Require<ResumeRequest>(request), cancellationToken),
         _ => throw new NotSupportedException("Unknown bridge method.")
     };
 
@@ -101,8 +111,7 @@ public sealed class BridgeRouter(
         var preferences = await settings.GetAsync(cancellationToken);
         var active = list.FirstOrDefault(provider => provider.Enabled && provider.Key == preferences.ActiveProviderKey)?.Key ?? list.FirstOrDefault(provider => provider.Enabled)?.Key;
         if (active != preferences.ActiveProviderKey) await settings.SaveAsync(preferences with { ActiveProviderKey = active }, cancellationToken);
-        var version = typeof(BridgeRouter).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-        return new { product = "IPTV Explorer Desktop", version, providerCount = list.Count, activeProviderKey = active, providers = list.Select(SafeProvider) };
+        return new { product = "IPTV Explorer Desktop", version = ApplicationVersion.Display, providerCount = list.Count, activeProviderKey = active, providers = list.Select(SafeProvider) };
     }
 
     private async Task<object> SetActiveProvider(ActiveProviderRequest input, CancellationToken cancellationToken)
@@ -138,7 +147,7 @@ public sealed class BridgeRouter(
         var hasSearchableSelection = summaries.Any(summary =>
             summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.Selected > 0);
         var existingJob = await jobs.LatestAsync(provider.Key, cancellationToken);
-        if (hasSearchableSelection && existingJob is null)
+        if (provider.Type != ProviderType.Xtream && hasSearchableSelection && existingJob is null)
         {
             await jobs.QueueAsync(provider.Key, cancellationToken);
         }
@@ -151,16 +160,8 @@ public sealed class BridgeRouter(
         var provider = await RequiredProvider(providerKey, cancellationToken);
         var summaries = await providers.GetCategorySummariesAsync(providerKey, cancellationToken);
         var job = await jobs.LatestAsync(providerKey, cancellationToken);
-        try
-        {
-            var client = await clients.CreateAsync(provider, cancellationToken);
-            var account = await client.GetAccountInfoAsync(cancellationToken);
-            return new { provider = SafeProvider(provider), available = account.Authenticated, account = new { account.Status, expiresAt = account.ExpiresAt }, categories = summaries, index = job, indexDirty = IndexDirty(summaries) };
-        }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested && exception is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            return new { provider = SafeProvider(provider), available = false, account = (object?)null, categories = summaries, index = job, indexDirty = IndexDirty(summaries) };
-        }
+        // Home is passive: activation is local state, not proof of live network availability.
+        return new { provider = SafeProvider(provider), available = (bool?)null, account = (object?)null, categories = summaries, index = job, indexDirty = IndexDirty(summaries) };
     }
 
     private async Task<object> SyncCategories(string providerKey, CancellationToken cancellationToken)
@@ -185,9 +186,7 @@ public sealed class BridgeRouter(
     private async Task<object> DeleteProvider(DeleteProviderRequest input, CancellationToken cancellationToken)
     {
         if (!input.Confirmed) throw new InvalidOperationException("Explicit confirmation is required.");
-        await management.DeleteAsync(input.ProviderKey, input.RemoveLocalData, paths.SearchIndex(input.ProviderKey), cancellationToken);
-        var preferences = await settings.GetAsync(cancellationToken);
-        if (preferences.ActiveProviderKey == input.ProviderKey) await settings.SaveAsync(preferences with { ActiveProviderKey = null }, cancellationToken);
+        await management.DeleteAsync(input.ProviderKey, input.RemoveLocalData, cancellationToken);
         return new { deleted = true };
     }
 
@@ -225,13 +224,26 @@ public sealed class BridgeRouter(
 
     private async Task<object> VodDetail(DetailRequest input, CancellationToken cancellationToken)
     {
-        ValidateMediaId(input.MediaId); var client = await EnabledClient(input.ProviderKey, cancellationToken); var detail = await client.GetVodDetailsAsync(input.MediaId, cancellationToken);
+        ValidateMediaId(input.MediaId);
+        var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var detail = provider.Type == ProviderType.Xtream
+            ? await details.VodAsync(provider, input.MediaId, cancellationToken)
+            : await (await EnabledClient(input.ProviderKey, cancellationToken)).GetVodDetailsAsync(input.MediaId, cancellationToken);
         return new { detail.Id, detail.Title, poster = SafeImage(detail.Poster), detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Duration, detail.Rating, detail.Extension };
     }
     private async Task<object> SeriesDetail(DetailRequest input, CancellationToken cancellationToken)
     {
-        ValidateMediaId(input.MediaId); var client = await EnabledClient(input.ProviderKey, cancellationToken); var detail = await client.GetSeriesDetailsAsync(input.MediaId, cancellationToken);
-        return new { detail.Id, detail.Title, poster = SafeImage(detail.Poster), detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Rating, detail.Seasons };
+        ValidateMediaId(input.MediaId);
+        var provider = await RequiredProvider(input.ProviderKey, cancellationToken);
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var detail = provider.Type == ProviderType.Xtream
+            ? await details.SeriesAsync(provider, input.MediaId, cancellationToken)
+            : await (await clients.CreateAsync(provider, cancellationToken)).GetSeriesDetailsAsync(input.MediaId, cancellationToken);
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
+        var poster = MediaArtwork.SafeImageUrl(detail.Poster, secret);
+        if (provider.Type != ProviderType.Xtream) await artwork.RememberDetailAsync(provider.Key, input.MediaId, poster, secret, cancellationToken);
+        return new { detail.Id, detail.Title, poster, detail.Plot, detail.Year, detail.Genre, detail.Director, detail.Cast, detail.Rating, detail.Seasons };
     }
     private async Task<object> QueueIndex(string providerKey, CancellationToken cancellationToken) { _ = await RequiredProvider(providerKey, cancellationToken); return new { jobId = await jobs.QueueAsync(providerKey, cancellationToken) }; }
     private async Task<object> IndexStatus(string providerKey, CancellationToken cancellationToken)
@@ -245,6 +257,72 @@ public sealed class BridgeRouter(
         if (input.Query.Trim().Length < 3) throw new ArgumentException("Enter at least three characters.");
         var catalog = ParseCatalog(input.CatalogType); return await search.SearchAsync(input.ProviderKey, catalog, input.Query.Trim(), Math.Clamp(input.Page, 1, 100000), Math.Clamp(input.PageSize, 1, 100), cancellationToken);
     }
+    private async Task<object> CatalogRefresh(string key, bool manual, CancellationToken token)
+    {
+        _ = await RequiredProvider(key, token);
+        if (!manual && (await settings.GetAsync(token)).ActiveProviderKey != key)
+            throw new InvalidOperationException("The requested provider is not active.");
+        return manual ? await catalogRefresh.RefreshManualAsync(key, token) : await catalogRefresh.EnsureSessionAsync(key, token);
+    }
+
+    private async Task<object> HomeContent(string providerKey, CancellationToken cancellationToken)
+    {
+        var provider = await RequiredProvider(providerKey, cancellationToken);
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var preferences = await settings.GetAsync(cancellationToken);
+        if (!string.Equals(preferences.ActiveProviderKey, providerKey, StringComparison.Ordinal)) throw new InvalidOperationException("The requested provider is not active.");
+
+        var inProgress = await playbackHistory.ListInProgressAsync(providerKey, 6, cancellationToken);
+        var recentFilms = provider.Type == ProviderType.Xtream
+            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Vod, 20, cancellationToken)
+            : [];
+        var recentSeries = provider.Type == ProviderType.Xtream
+            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken)
+            : [];
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
+        recentSeries = await artwork.ApplyCachedAsync(providerKey, secret, recentSeries, cancellationToken);
+        object RecentItem(SearchHit item) => new
+        {
+            catalog = item.Catalog.ToString().ToLowerInvariant(),
+            id = item.RemoteId,
+            item.Title,
+            imageUrl = MediaArtwork.SafeImageUrl(item.ImageUrl, secret),
+            addedAt = item.AddedAt
+        };
+        var backgrounds = inProgress.Take(1).Select(progress => HomeArtwork.Candidates(null, progress.PosterUrl, secret))
+            .Concat(recentFilms.Take(6).Select(item => HomeArtwork.Candidates(item.BackdropUrl, item.ImageUrl, secret)))
+            .Concat(recentSeries.Take(6).Select(item => HomeArtwork.Candidates(item.BackdropUrl, item.ImageUrl, secret)))
+            .Where(candidates => candidates.Count > 0).DistinctBy(candidates => candidates[0].Url).ToArray();
+        return new
+        {
+            continueWatching = inProgress.Select(progress => new
+            {
+                providerKey = progress.ProviderKey,
+                catalog = progress.Catalog.ToString().ToLowerInvariant(),
+                mediaId = progress.MediaId,
+                title = progress.Catalog == CatalogType.Series ? progress.SeriesTitle ?? progress.Title : progress.Title,
+                episodeTitle = progress.Catalog == CatalogType.Series ? progress.Title : null,
+                progress.Season,
+                progress.Episode,
+                posterUrl = HomeArtwork.SafeUrl(progress.PosterUrl, secret),
+                positionSeconds = progress.Position.TotalSeconds,
+                durationSeconds = progress.Duration?.TotalSeconds,
+                percentage = PlaybackProgressPolicy.Percentage(progress.Position, progress.Duration),
+                updatedAt = progress.UpdatedAt
+            }),
+            recentlyAddedFilms = recentFilms.Select(RecentItem),
+            recentlyAddedSeries = recentSeries.Select(RecentItem),
+            backgroundImages = backgrounds,
+            recentSupported = provider.Type == ProviderType.Xtream
+        };
+    }
+
+    private async Task<object> ResumePlayback(ResumeRequest input, CancellationToken cancellationToken)
+    {
+        var preferences = await settings.GetAsync(cancellationToken);
+        if (!string.Equals(preferences.ActiveProviderKey, input.ProviderKey, StringComparison.Ordinal)) throw new InvalidOperationException("Activez le fournisseur associé avant de reprendre ce contenu.");
+        return await playback.ResumeAsync(input.ProviderKey, ParseCatalog(input.CatalogType), input.MediaId, cancellationToken);
+    }
 
     private async Task<IProviderClient> EnabledClient(string providerKey, CancellationToken cancellationToken)
     {
@@ -255,12 +333,7 @@ public sealed class BridgeRouter(
     private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, category.Selected, category.Present, category.NeedsReview };
     private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating };
     private static bool IndexDirty(IEnumerable<CategorySummary> summaries) => summaries.Any(summary => summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.IndexDirty);
-    private static string? SafeImage(string? value)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo)) return null;
-        var sensitive = uri.Query.Contains("token=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("password=", StringComparison.OrdinalIgnoreCase) || uri.Query.Contains("username=", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/movie/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/series/", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.Contains("/live/", StringComparison.OrdinalIgnoreCase);
-        return sensitive ? null : uri.ToString();
-    }
+    private static string? SafeImage(string? value) => MediaArtwork.SafeImageUrl(value);
     private static CatalogType ParseCatalog(string value) => Enum.TryParse<CatalogType>(value, true, out var catalog) ? catalog : throw new ArgumentException("Invalid catalog type.");
     private static void ValidateCategoryId(string value) { if (string.IsNullOrWhiteSpace(value) || value.Length > 180) throw new ArgumentException("Invalid category id."); }
     private static void ValidateMediaId(string value) { if (string.IsNullOrWhiteSpace(value) || value.Length > 512 || Uri.TryCreate(value, UriKind.Absolute, out _)) throw new ArgumentException("Invalid media id."); }
@@ -291,4 +364,5 @@ public sealed class BridgeRouter(
     private sealed record PagedCatalogRequest(string ProviderKey, string CategoryId, int Page);
     private sealed record DetailRequest(string ProviderKey, string MediaId);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
+    private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
 }

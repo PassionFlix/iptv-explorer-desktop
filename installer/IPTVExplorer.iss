@@ -3,10 +3,10 @@
 #define MyAppExeName "IPTVExplorer.Desktop.exe"
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #error AppVersion must be supplied by scripts\Publish-Release.ps1
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\dist\IPTV-Explorer-1.0.0-win-x64"
+  #error SourceDir must be supplied by scripts\Publish-Release.ps1
 #endif
 #ifndef OutputDir
   #define OutputDir "..\dist"
@@ -51,7 +51,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; GroupDescription: "Raccourcis :"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\native\mpv\libmpv-2.dll"; DestDir: "{app}\native\mpv"; Flags: ignoreversion
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "native\mpv\libmpv-2.dll"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\IPTV Explorer"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fixture locale — fond d’accueil</title>
+  <link rel="stylesheet" href="../../src/IPTVExplorer.Desktop/ui/app.css">
+  <style>
+    .fixture-controls { position: fixed; right: 18px; bottom: 18px; z-index: 5; display: flex; gap: 8px; }
+    .fixture-card { min-height: 98px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+    .fixture-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+    @media (max-width: 900px) { .fixture-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div id="home-backdrop" class="home-backdrop" aria-hidden="true">
+      <div id="fixture-backdrop" class="home-backdrop-layer is-backdrop is-active" data-kind="backdrop" aria-hidden="true">
+        <img class="home-backdrop-fill" alt="" aria-hidden="true" referrerpolicy="no-referrer" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900'%3E%3Cdefs%3E%3ClinearGradient id='g' x2='1' y2='1'%3E%3Cstop stop-color='%23124b72'/%3E%3Cstop offset='.5' stop-color='%237b295f'/%3E%3Cstop offset='1' stop-color='%23e38a43'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23g)'/%3E%3Ccircle cx='1210' cy='390' r='260' fill='%23f7cf8a' opacity='.72'/%3E%3Cpath d='M0 700L430 360 760 680 1020 430 1600 760V900H0Z' fill='%23081729' opacity='.82'/%3E%3Ctext x='820' y='160' fill='white' font-family='sans-serif' font-size='76' font-weight='700'%3EPANORAMA 16:9%3C/text%3E%3C/svg%3E">
+        <img class="home-backdrop-subject" alt="" aria-hidden="true" referrerpolicy="no-referrer">
+      </div>
+      <div id="fixture-poster" class="home-backdrop-layer is-poster" data-kind="poster" aria-hidden="true">
+        <img class="home-backdrop-fill" alt="" aria-hidden="true" referrerpolicy="no-referrer" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 1200'%3E%3Cdefs%3E%3ClinearGradient id='p' y2='1'%3E%3Cstop stop-color='%23063c54'/%3E%3Cstop offset='.55' stop-color='%23c13e64'/%3E%3Cstop offset='1' stop-color='%23efb35b'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='800' height='1200' rx='36' fill='url(%23p)'/%3E%3Ccircle cx='400' cy='380' r='210' fill='%23f9d2a0'/%3E%3Cpath d='M120 1120Q180 650 400 650T680 1120Z' fill='%2307152c'/%3E%3Ctext x='400' y='105' text-anchor='middle' fill='white' font-family='sans-serif' font-size='70' font-weight='700'%3EAFFICHE%3C/text%3E%3Ctext x='400' y='1160' text-anchor='middle' fill='white' font-family='sans-serif' font-size='44'%3EFORMAT 2:3%3C/text%3E%3C/svg%3E">
+        <img class="home-backdrop-subject" alt="" aria-hidden="true" referrerpolicy="no-referrer" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 1200'%3E%3Cdefs%3E%3ClinearGradient id='p' y2='1'%3E%3Cstop stop-color='%23063c54'/%3E%3Cstop offset='.55' stop-color='%23c13e64'/%3E%3Cstop offset='1' stop-color='%23efb35b'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='800' height='1200' rx='36' fill='url(%23p)'/%3E%3Ccircle cx='400' cy='380' r='210' fill='%23f9d2a0'/%3E%3Cpath d='M120 1120Q180 650 400 650T680 1120Z' fill='%2307152c'/%3E%3Ctext x='400' y='105' text-anchor='middle' fill='white' font-family='sans-serif' font-size='70' font-weight='700'%3EAFFICHE%3C/text%3E%3Ctext x='400' y='1160' text-anchor='middle' fill='white' font-family='sans-serif' font-size='44'%3EFORMAT 2:3%3C/text%3E%3C/svg%3E">
+      </div>
+    </div>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">IE</span><div><strong>IPTV Explorer</strong><small>Fixture locale</small></div></div>
+      <nav><button class="nav active"><span>⌂</span>Accueil</button><button class="nav"><span>▶</span>Films</button><button class="nav"><span>▤</span>Séries</button></nav>
+    </aside>
+    <main>
+      <header class="topbar"><div><p class="eyebrow">FIXTURE LOCALE SANS RÉSEAU</p><h1>Accueil</h1></div><span class="privacy">Local et privé</span></header>
+      <section class="page active">
+        <article class="home-provider-card"><div><p class="eyebrow">FOURNISSEUR ACTIF</p><h2>Bibliothèque de démonstration</h2><p class="muted">Composition du fond uniquement</p></div><span class="status success">Prêt</span></article>
+        <div class="fixture-grid">
+          <article class="fixture-card"><p class="eyebrow">LISIBILITÉ</p><h2>Textes nets</h2><p class="muted">Le contenu reste prioritaire sur l’illustration.</p></article>
+          <article class="fixture-card"><p class="eyebrow">CADRAGE</p><h2>Image identifiable</h2><p class="muted">Le sujet vertical ne doit plus être zoomé.</p></article>
+          <article class="fixture-card"><p class="eyebrow">AMBIANCE</p><h2>Sombre et premium</h2><p class="muted">Le remplissage conserve une présence douce.</p></article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="fixture-controls">
+    <button type="button" class="secondary" data-mode="backdrop">Backdrop 16:9</button>
+    <button type="button" class="primary" data-mode="poster">Poster 2:3</button>
+  </div>
+  <script>
+    const backdrop = document.querySelector('#fixture-backdrop');
+    const poster = document.querySelector('#fixture-poster');
+    const setMode = mode => {
+      backdrop.classList.toggle('is-active', mode === 'backdrop');
+      poster.classList.toggle('is-active', mode === 'poster');
+      document.title = `Fixture locale — ${mode}`;
+    };
+    document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
+    if (new URLSearchParams(location.search).get('mode') === 'poster') setMode('poster');
+  </script>
+</body>
+</html>

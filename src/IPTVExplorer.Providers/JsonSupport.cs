@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Text.Json;
 using IPTVExplorer.Core;
 
@@ -134,7 +135,7 @@ internal static class JsonSupport
     private static string Kind(JsonElement element) => element.ValueKind.ToString().ToLowerInvariant();
     private static string Names(IEnumerable<string> names) => string.Join('|', names.Take(12).Select(name => new string(name.Where(character => char.IsLetterOrDigit(character) || character is '_' or '-').Take(40).ToArray())).Where(name => name.Length > 0));
 
-    public static CatalogItem Item(JsonElement item, CatalogType catalog)
+    public static CatalogItem Item(JsonElement item, CatalogType catalog, bool useSeriesModifiedDate = false)
     {
         var id = catalog switch
         {
@@ -144,11 +145,51 @@ internal static class JsonSupport
             _ => item.Text("id")
         } ?? string.Empty;
         var title = item.Text("name", "title") ?? "Untitled";
-        var image = item.Text("stream_icon", "cover", "screenshot_uri", "logo");
+        var image = catalog == CatalogType.Series
+            ? new[] { "cover", "movie_image", "stream_icon", "screenshot_uri", "logo" }
+                .Select(field => item.Text(field)).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+            : item.Text("stream_icon", "cover", "screenshot_uri", "logo");
         var extension = item.Text("container_extension");
         var year = item.Text("year", "releaseDate", "releasedate");
         double? rating = double.TryParse(item.Text("rating", "rating_5based", "kinopoisk_rating"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedRating) ? parsedRating : null;
-        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating);
+        var added = new[] { "added", "added_at", "created_at" }
+            .Select(field => ParseAddedAt(item.Text(field))).FirstOrDefault(date => date is not null);
+        // Xtream exposes last_modified for series. This is provider recency (including updates),
+        // never the release year, local indexing time, list position or an inferred creation date.
+        if (added is null && catalog == CatalogType.Series && useSeriesModifiedDate)
+            added = ParseAddedAt(item.Text("last_modified"));
+        return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, added, Backdrop(item),
+            item.Text("category_id"), item.Text("plot", "description"), item.Text("genre"), item.Text("director"), item.Text("cast", "actors"), item.Text("duration", "duration_secs"));
+    }
+
+    private static string? Backdrop(JsonElement item)
+    {
+        foreach (var field in new[] { "backdrop_path", "backdrop" })
+        {
+            if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty(field, out var value)) continue;
+            var candidates = value.ValueKind == JsonValueKind.Array ? value.EnumerateArray().ToArray() : [value];
+            foreach (var candidate in candidates)
+                if (candidate.ValueKind == JsonValueKind.String && HomeArtwork.SafeUrl(candidate.GetString()) is { } safe) return safe;
+        }
+        return null;
+    }
+
+    private static DateTimeOffset? ParseAddedAt(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        DateTimeOffset parsed;
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var epoch))
+        {
+            try { parsed = epoch > 10_000_000_000 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch) : DateTimeOffset.FromUnixTimeSeconds(epoch); }
+            catch (ArgumentOutOfRangeException) { return null; }
+        }
+        else if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out parsed))
+        {
+            return null;
+        }
+
+        var utc = parsed.ToUniversalTime();
+        return utc.Year >= 2000 && utc <= DateTimeOffset.UtcNow.AddDays(1) ? utc : null;
     }
 
     private static string InfrastructureCompatibleNormalize(string value)

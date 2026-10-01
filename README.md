@@ -1,6 +1,6 @@
 # IPTV Explorer Desktop
 
-![Version](https://img.shields.io/badge/version-1.0.0-6d5dfc)
+![Version](https://img.shields.io/badge/version-1.1.0-6d5dfc)
 ![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64-0078d4)
 ![License](https://img.shields.io/badge/license-MIT-22c55e)
 
@@ -31,10 +31,10 @@ La version stable est publiée dans **GitHub Releases** :
 
 https://github.com/PassionFlix/iptv-explorer-desktop/releases/latest
 
-La release `v1.0.0` fournit :
+La release `v1.1.0` fournit :
 
-- `IPTV-Explorer-Setup-1.0.0-x64.exe` — installateur Windows x64.
-- `IPTV-Explorer-1.0.0-win-x64.zip` — version portable.
+- `IPTV-Explorer-Setup-1.1.0-x64.exe` — installateur Windows x64.
+- `IPTV-Explorer-1.1.0-win-x64.zip` — version portable.
 - `SHA256SUMS.txt` — sommes SHA-256 des artefacts.
 
 Le build Release est **self-contained** : le runtime .NET n'a pas besoin d'être installé séparément. Microsoft Edge WebView2 Runtime doit être disponible sur Windows ; il est déjà présent sur la grande majorité des installations Windows 10/11 modernes.
@@ -103,7 +103,9 @@ dotnet build .\IPTVExplorer.Desktop.sln -c Release --no-restore
 dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build
 ```
 
-Pour préparer le runtime libmpv LGPL utilisé par le packaging :
+Le premier build Windows récupère automatiquement la build libmpv x64 épinglée, contrôle son SHA-256 et vérifie sa présence dans le dossier de sortie. 7-Zip doit être installé ; le script détecte `7z.exe` dans `PATH` et dans les emplacements Windows habituels.
+
+Pour précharger ou actualiser manuellement le runtime libmpv LGPL utilisé par le build et le packaging :
 
 ```powershell
 .\scripts\Get-LibMpvRuntime.ps1
@@ -112,7 +114,7 @@ Pour préparer le runtime libmpv LGPL utilisé par le packaging :
 Pour générer le package portable local :
 
 ```powershell
-.\scripts\Publish-Release.ps1 -Version 1.0.0
+.\scripts\Publish-Release.ps1 -Version 1.1.0
 ```
 
 Avec Inno Setup installé, l'option `-BuildInstaller` génère également l'installateur EXE.

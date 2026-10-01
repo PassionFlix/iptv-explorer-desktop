@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using IPTVExplorer.Core;
 using Microsoft.Data.Sqlite;
@@ -115,9 +116,47 @@ public sealed partial class ProviderRepository(SqliteConnectionFactory connectio
     public async Task DeleteAsync(string key, CancellationToken cancellationToken = default)
     {
         RequireKey(key);
-        await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken); await EnableForeignKeys(connection, cancellationToken);
-        await using var command = connection.CreateCommand(); command.CommandText = "DELETE FROM providers WHERE provider_key=$key"; command.Parameters.AddWithValue("$key", key);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new KeyNotFoundException("Provider was not found.");
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await EnableForeignKeys(connection, cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+
+        await using (var readPreferences = connection.CreateCommand())
+        {
+            readPreferences.Transaction = transaction;
+            readPreferences.CommandText = "SELECT value_json FROM app_settings WHERE setting_key='app.preferences'";
+            var raw = Convert.ToString(await readPreferences.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                try
+                {
+                    var preferences = JsonSerializer.Deserialize<AppPreferences>(raw, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    if (preferences?.ActiveProviderKey == key)
+                    {
+                        await using var clearActive = connection.CreateCommand();
+                        clearActive.Transaction = transaction;
+                        clearActive.CommandText = "UPDATE app_settings SET value_json=$value,updated_at=$now WHERE setting_key='app.preferences'";
+                        clearActive.Parameters.AddWithValue("$value", JsonSerializer.Serialize(preferences with { ActiveProviderKey = null }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+                        clearActive.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+                        await clearActive.ExecuteNonQueryAsync(cancellationToken);
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Corrupt preferences already fall back to defaults; provider deletion remains valid.
+                }
+            }
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM providers WHERE provider_key=$key";
+            command.Parameters.AddWithValue("$key", key);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new KeyNotFoundException("Provider was not found.");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<ProviderCategory>> ListCategoriesAsync(string providerKey, CatalogType catalog, bool includeMissing = true, CancellationToken cancellationToken = default)

@@ -2,8 +2,9 @@ using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Providers;
 
-public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecretStore secrets) : IProviderClientFactory
+public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecretStore secrets) : IRemoteProviderClientFactory
 {
+    private readonly SemaphoreSlim _xtreamRequests = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, StalkerClientCacheEntry> _stalkerClients = new(StringComparer.Ordinal);
 
     public async Task<IProviderClient> CreateAsync(ProviderRecord provider, CancellationToken cancellationToken = default)
@@ -11,10 +12,16 @@ public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecre
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken) ?? throw new InvalidOperationException("Provider credentials are unavailable.");
         return provider.Type switch
         {
-            ProviderType.Xtream => new XtreamProviderClient(provider, secret, httpClients.CreateClient("providers")),
+            ProviderType.Xtream => new XtreamProviderClient(provider, secret, httpClients.CreateClient("providers"), _xtreamRequests),
             ProviderType.Stalker => StalkerClient(provider, secret),
             _ => throw new NotSupportedException("Provider type is not supported.")
         };
+    }
+
+    public void Evict(string providerKey)
+    {
+        if (!ProviderKey.IsValid(providerKey)) throw new ArgumentException("Invalid provider key.", nameof(providerKey));
+        _stalkerClients.TryRemove(providerKey, out _);
     }
 
     private StalkerProviderClient StalkerClient(ProviderRecord provider, ProviderSecret secret)
@@ -37,8 +44,8 @@ public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecre
 
 public static class ProviderHttpRegistration
 {
-    public const string AppUserAgent = "IPTVExplorerDesktop/1.0";
-    public const string MediaUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVExplorerDesktop/1.0";
+    public static string AppUserAgent => $"IPTVExplorerDesktop/{ApplicationVersion.Display}";
+    public static string MediaUserAgent => $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVExplorerDesktop/{ApplicationVersion.Display}";
 
     public static void Configure(HttpClient client)
     {

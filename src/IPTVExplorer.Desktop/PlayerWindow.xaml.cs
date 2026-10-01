@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using IPTVExplorer.Core;
 using IPTVExplorer.Player;
 
@@ -9,14 +11,14 @@ namespace IPTVExplorer.Desktop;
 public partial class PlayerWindow : Window
 {
     private readonly IPlayerService _player;
+    private readonly TrueFullscreenBehavior _fullscreenBehavior;
+    private readonly DispatcherTimer _controlsHideTimer;
+    private readonly Brush _windowedControlsBackground;
     private readonly TaskCompletionSource<nint> _renderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _seeking;
+    private bool _softStopped;
     private bool _updatingTracks;
     private bool _updatingEpisodes;
-    private bool _fullscreen;
-    private WindowStyle _savedStyle;
-    private ResizeMode _savedResizeMode;
-    private WindowState _savedState;
     private PlayerState _state = PlayerState.Idle;
     private Func<PlayerEpisodeOption, CancellationToken, Task>? _episodeSelectionHandler;
     private CancellationTokenSource? _episodeSelectionCancellation;
@@ -25,7 +27,12 @@ public partial class PlayerWindow : Window
     {
         _player = player;
         InitializeComponent();
+        _fullscreenBehavior = new(this);
+        _windowedControlsBackground = ControlsPanel.Background;
+        _controlsHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _controlsHideTimer.Tick += OnControlsHideTimerTick;
         VideoHost.HandleReady += OnHandleReady;
+        VideoHost.PointerMoved += OnVideoPointerMoved;
         _player.StateChanged += OnStateChanged;
         _player.PositionChanged += OnPositionChanged;
         _player.TrackListChanged += OnTrackListChanged;
@@ -72,9 +79,11 @@ public partial class PlayerWindow : Window
 
     private void OnStateChanged(object? sender, PlayerStateChangedEventArgs e) => Dispatcher.BeginInvoke(() =>
     {
-        _state = e.State;
-        PlayPauseButton.Content = e.State == PlayerState.Paused ? "Lire" : "Pause";
-        StatusText.Text = e.SafeMessage ?? e.State switch
+        if (e.State is PlayerState.Loading or PlayerState.Playing) _softStopped = false;
+        var displayState = _softStopped && e.State == PlayerState.Paused ? PlayerState.Stopped : e.State;
+        _state = displayState;
+        PlayPauseButton.Content = displayState is PlayerState.Paused or PlayerState.Stopped ? "Lecture" : "Pause";
+        StatusText.Text = e.SafeMessage ?? displayState switch
         {
             PlayerState.Loading => "Chargement…",
             PlayerState.Playing => "Lecture",
@@ -121,12 +130,37 @@ public partial class PlayerWindow : Window
 
     private void TogglePlayPause()
     {
-        if (_state == PlayerState.Paused) _player.Play(); else _player.Pause();
+        if (_state is PlayerState.Paused or PlayerState.Stopped)
+        {
+            _softStopped = false;
+            _player.Play();
+        }
+        else
+        {
+            _player.Pause();
+        }
     }
 
-    private void OnStop(object sender, RoutedEventArgs e) => _player.Stop();
-    private void OnSeekStarted(object sender, MouseButtonEventArgs e) => _seeking = true;
-    private void OnSeekCompleted(object sender, MouseButtonEventArgs e) { _player.Seek(TimeSpan.FromSeconds(PositionSlider.Value)); _seeking = false; }
+    private void OnStop(object sender, RoutedEventArgs e)
+    {
+        if (_state is PlayerState.Idle or PlayerState.Error) return;
+        _softStopped = true;
+        _player.Pause();
+        _player.Seek(TimeSpan.Zero);
+        _state = PlayerState.Stopped;
+        PlayPauseButton.Content = "Lecture";
+        StatusText.Text = "Arrêté";
+        ShowFullscreenControls();
+    }
+
+    private void OnSeekStarted(object sender, MouseButtonEventArgs e) { _seeking = true; ShowFullscreenControls(); }
+    private void OnSeekCompleted(object sender, MouseButtonEventArgs e)
+    {
+        _player.Seek(TimeSpan.FromSeconds(PositionSlider.Value));
+        _seeking = false;
+        ShowFullscreenControls();
+    }
+    private void OnSeekCaptureLost(object sender, MouseEventArgs e) { _seeking = false; ShowFullscreenControls(); }
     private void OnVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e) { if (IsLoaded) _player.SetVolume(e.NewValue); }
 
     private async void OnEpisodeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -173,33 +207,96 @@ public partial class PlayerWindow : Window
         if (choice.Id is long id) _player.SelectSubtitleTrack(id); else _player.SetSubtitleEnabled(false);
     }
 
-    private void OnFullscreen(object sender, RoutedEventArgs e) => SetFullscreen(!_fullscreen);
+    private void OnFullscreen(object sender, RoutedEventArgs e) => SetFullscreen(!_fullscreenBehavior.IsFullscreen);
 
     private void SetFullscreen(bool fullscreen)
     {
-        if (_fullscreen == fullscreen) return;
-        if (fullscreen)
+        if (_fullscreenBehavior.IsFullscreen == fullscreen) return;
+        var changed = fullscreen ? _fullscreenBehavior.Enter() : _fullscreenBehavior.Exit();
+        if (!changed)
         {
-            _savedStyle = WindowStyle;
-            _savedResizeMode = ResizeMode;
-            _savedState = WindowState;
-            WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
-            WindowState = WindowState.Maximized;
+            StatusText.Text = fullscreen ? "Impossible d’activer le plein écran" : "Impossible de quitter le plein écran";
+            return;
         }
-        else
-        {
-            WindowStyle = _savedStyle;
-            ResizeMode = _savedResizeMode;
-            WindowState = _savedState;
-        }
-        _fullscreen = fullscreen;
+
+        FullscreenButton.Content = fullscreen ? "Quitter le plein écran" : "Plein écran";
+        if (fullscreen) EnterFullscreenControls();
+        else ExitFullscreenControls();
         _player.SetFullscreen(fullscreen);
     }
 
-    private void OnKeyDown(object sender, KeyEventArgs e)
+    private void EnterFullscreenControls()
     {
-        if (e.Key == Key.Escape && _fullscreen)
+        PlayerLayout.Children.Remove(ControlsPanel);
+        ControlsRow.Height = new GridLength(0);
+        ControlsPanel.Background = new SolidColorBrush(Color.FromArgb(232, 16, 23, 34));
+        FullscreenControlsPopup.Child = ControlsPanel;
+        FullscreenControlsPopup.Width = PlayerLayout.ActualWidth;
+        ShowFullscreenControls();
+    }
+
+    private void ExitFullscreenControls()
+    {
+        _controlsHideTimer.Stop();
+        FullscreenControlsPopup.IsOpen = false;
+        FullscreenControlsPopup.Child = null;
+        ControlsPanel.Background = _windowedControlsBackground;
+        PlayerLayout.Children.Add(ControlsPanel);
+        ControlsRow.Height = GridLength.Auto;
+        RestoreCursor();
+    }
+
+    private void ShowFullscreenControls()
+    {
+        if (!_fullscreenBehavior.IsFullscreen) return;
+        FullscreenControlsPopup.IsOpen = true;
+        RestoreCursor();
+        _controlsHideTimer.Stop();
+        _controlsHideTimer.Start();
+    }
+
+    private void OnControlsHideTimerTick(object? sender, EventArgs e)
+    {
+        _controlsHideTimer.Stop();
+        if (!_fullscreenBehavior.IsFullscreen) return;
+        if (_seeking || Mouse.LeftButton == MouseButtonState.Pressed || Mouse.Captured is not null ||
+            EpisodeSelector.IsDropDownOpen || AudioTracks.IsDropDownOpen || SubtitleTracks.IsDropDownOpen)
+        {
+            _controlsHideTimer.Start();
+            return;
+        }
+
+        FullscreenControlsPopup.IsOpen = false;
+        Cursor = Cursors.None;
+        VideoHost.SetCursorHidden(true);
+    }
+
+    private void RestoreCursor()
+    {
+        Cursor = null;
+        VideoHost.SetCursorHidden(false);
+    }
+
+    private void OnPlayerLayoutSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_fullscreenBehavior?.IsFullscreen == true) FullscreenControlsPopup.Width = e.NewSize.Width;
+    }
+
+    private void OnVideoPointerMoved(object? sender, EventArgs e) => ShowFullscreenControls();
+    private void OnControlsPointerMoved(object sender, MouseEventArgs e) => ShowFullscreenControls();
+    private void OnControlsInteracted(object sender, MouseButtonEventArgs e) => ShowFullscreenControls();
+    private void OnTrackDropdownOpened(object sender, EventArgs e) => ShowFullscreenControls();
+    private void OnTrackDropdownClosed(object sender, EventArgs e) => ShowFullscreenControls();
+
+    private void OnControlsPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        OnPreviewKeyDown(sender, e);
+        if (!e.Handled) ShowFullscreenControls();
+    }
+
+    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && _fullscreenBehavior.IsFullscreen)
         {
             SetFullscreen(false);
             e.Handled = true;
@@ -208,11 +305,13 @@ public partial class PlayerWindow : Window
 
         if (e.Key == Key.F11)
         {
-            SetFullscreen(!_fullscreen);
+            SetFullscreen(!_fullscreenBehavior.IsFullscreen);
             e.Handled = true;
-            return;
         }
+    }
 
+    private void OnKeyDown(object sender, KeyEventArgs e)
+    {
         if (e.Key == Key.Space && Keyboard.FocusedElement is not System.Windows.Controls.ComboBox)
         {
             TogglePlayPause();
@@ -222,6 +321,10 @@ public partial class PlayerWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        _controlsHideTimer.Stop();
+        FullscreenControlsPopup.IsOpen = false;
+        RestoreCursor();
+        VideoHost.PointerMoved -= OnVideoPointerMoved;
         _episodeSelectionCancellation?.Cancel();
         _episodeSelectionCancellation?.Dispose();
         _episodeSelectionCancellation = null;

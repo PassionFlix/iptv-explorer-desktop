@@ -89,6 +89,40 @@ public sealed class PersistenceAndIndexTests
     }
 
     [Fact]
+    public async Task AtomicIndexReplacesPreviouslyReadPooledIndexAndReopensNewData()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var index = new AtomicSearchIndex(database.Paths);
+        var search = new SearchService(database.Paths);
+        var oldDate = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var newDate = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        await index.ReplaceAsync("fixture-provider",
+        [
+            new("fixture-provider", CatalogType.Vod, "old", "Old title", null, oldDate)
+        ]);
+
+        Assert.Single((await search.SearchAsync("fixture-provider", CatalogType.Vod, "old", 1, 20)).Items);
+        Assert.Equal("old", Assert.Single(await search.RecentlyAddedAsync("fixture-provider", CatalogType.Vod, 12)).RemoteId);
+
+        await index.ReplaceAsync("fixture-provider",
+        [
+            new("fixture-provider", CatalogType.Series, "new", "New title", null, newDate)
+        ]);
+
+        Assert.Empty((await search.SearchAsync("fixture-provider", CatalogType.Vod, "old", 1, 20)).Items);
+        var recent = Assert.Single(await search.RecentlyAddedAsync("fixture-provider", CatalogType.Series, 12));
+        Assert.Equal("new", recent.RemoteId);
+        Assert.Equal(newDate, recent.AddedAt);
+        var path = database.Paths.SearchIndex("fixture-provider");
+        Assert.False(File.Exists(path + ".tmp"));
+        Assert.False(File.Exists(path + ".tmp-wal"));
+        Assert.False(File.Exists(path + ".tmp-shm"));
+        Assert.False(File.Exists(path + ".previous"));
+        Assert.False(File.Exists(path + ".previous-wal"));
+        Assert.False(File.Exists(path + ".previous-shm"));
+    }
+
+    [Fact]
     public async Task ProviderUpdateKeepsBlankSecretAndDeleteRemovesIt()
     {
         await using var database = await TestDatabase.CreateAsync();
@@ -96,14 +130,14 @@ public sealed class PersistenceAndIndexTests
         var originalReference = await secrets.PutAsync(new ProviderSecret("fixture-user", "fixture-password"));
         var provider = await database.AddProviderAsync(secretReference: originalReference);
         var factory = new ProviderClientFactory(new StubHttpClientFactory(new SuccessfulXtreamHandler()), secrets);
-        var management = new ProviderManagementService(database.Repository, secrets, factory);
+        var management = new ProviderManagementService(database.Repository, secrets, factory, new ProviderLocalDataStore(database.Paths));
 
         var updated = await management.UpdateAsync(provider.Key, new("Renamed Fixture", "https://example.invalid/base", null, null, null));
         Assert.Null(await secrets.GetAsync(originalReference));
         Assert.Equal("fixture-password", (await secrets.GetAsync(updated.SecretReference))?.Password);
         Assert.Equal("Renamed Fixture", (await database.Repository.GetAsync(provider.Key))?.Name);
 
-        await management.DeleteAsync(provider.Key, removeLocalData: false, indexPath: null);
+        await management.DeleteAsync(provider.Key, removeLocalData: false);
         Assert.Null(await secrets.GetAsync(updated.SecretReference));
         Assert.Null(await database.Repository.GetAsync(provider.Key));
     }

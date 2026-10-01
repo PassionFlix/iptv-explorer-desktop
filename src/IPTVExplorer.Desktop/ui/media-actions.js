@@ -99,12 +99,18 @@
     header.className = 'desktop-download-header';
     const title = document.createElement('strong');
     title.textContent = fileName || 'Téléchargement';
+    title.title = title.textContent;
     const percentage = document.createElement('span');
     percentage.textContent = 'Préparation…';
     header.append(title, percentage);
 
     const track = document.createElement('div');
     track.className = 'desktop-download-track indeterminate';
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', 'Progression du téléchargement');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuetext', 'Préparation');
     const fill = document.createElement('span');
     track.append(fill);
 
@@ -112,11 +118,16 @@
     meta.className = 'desktop-download-meta';
     meta.textContent = 'Connexion au fournisseur…';
 
+    const footer = document.createElement('div');
+    footer.className = 'desktop-download-footer';
+
     const cancel = actionButton('Annuler', 'secondary desktop-download-cancel');
+    cancel.setAttribute('aria-label', `Annuler le téléchargement de ${title.textContent}`);
     cancel.addEventListener('click', async () => {
       if (cancel.disabled) return;
       cancel.disabled = true;
       cancel.textContent = 'Annulation…';
+      announcement.textContent = 'Annulation du téléchargement demandée.';
       try {
         await rpc('media.download.cancel', { downloadId });
       } catch (error) {
@@ -124,10 +135,16 @@
       }
     });
 
-    panel.append(header, track, meta, cancel);
+    const announcement = document.createElement('div');
+    announcement.className = 'visually-hidden desktop-download-announcement';
+    announcement.setAttribute('aria-live', 'polite');
+    announcement.textContent = 'Téléchargement en préparation.';
+
+    footer.append(meta, cancel);
+    panel.append(header, track, footer, announcement);
     parent.append(panel);
 
-    return { panel, percentage, track, fill, meta, cancel, downloadButton, originalLabel };
+    return { panel, percentage, track, fill, meta, cancel, announcement, downloadButton, originalLabel };
   }
 
   function renderDownloadStatus(view, status) {
@@ -140,11 +157,15 @@
     if (hasTotal) {
       view.track.classList.remove('indeterminate');
       view.fill.style.width = `${percent}%`;
+      view.track.setAttribute('aria-valuenow', String(percent));
+      view.track.removeAttribute('aria-valuetext');
       view.percentage.textContent = `${percent} %`;
       view.meta.textContent = `${formatBytes(received)} / ${formatBytes(total)}${speed > 0 ? ` · ${formatBytes(speed)}/s` : ''}`;
     } else {
       view.track.classList.add('indeterminate');
       view.fill.style.width = '';
+      view.track.removeAttribute('aria-valuenow');
+      view.track.setAttribute('aria-valuetext', status.status === 'starting' ? 'Préparation' : 'En cours');
       view.percentage.textContent = status.status === 'starting' ? 'Préparation…' : 'En cours…';
       view.meta.textContent = `${formatBytes(received)}${speed > 0 ? ` · ${formatBytes(speed)}/s` : ''}`;
     }
@@ -152,20 +173,29 @@
     if (status.status === 'completed') {
       view.track.classList.remove('indeterminate');
       view.fill.style.width = '100%';
+      view.track.setAttribute('aria-valuenow', '100');
+      view.track.removeAttribute('aria-valuetext');
       view.percentage.textContent = '100 %';
       view.meta.textContent = `Terminé · ${formatBytes(received)}`;
       view.cancel.disabled = true;
       view.cancel.textContent = 'Terminé';
+      view.announcement.textContent = 'Téléchargement terminé.';
     } else if (status.status === 'cancelled') {
+      view.track.removeAttribute('aria-valuenow');
+      view.track.setAttribute('aria-valuetext', 'Annulé');
       view.percentage.textContent = 'Annulé';
       view.meta.textContent = 'Téléchargement annulé.';
       view.cancel.disabled = true;
       view.cancel.textContent = 'Annulé';
+      view.announcement.textContent = 'Téléchargement annulé.';
     } else if (status.status === 'failed') {
+      view.track.removeAttribute('aria-valuenow');
+      view.track.setAttribute('aria-valuetext', 'Échec');
       view.percentage.textContent = 'Échec';
       view.meta.textContent = status.error || 'Le téléchargement a échoué.';
       view.cancel.disabled = true;
       view.cancel.textContent = 'Échec';
+      view.announcement.textContent = 'Échec du téléchargement.';
     }
   }
 
@@ -189,6 +219,10 @@
       view.percentage.textContent = 'Échec';
       view.meta.textContent = error.message;
       view.cancel.disabled = true;
+      view.cancel.textContent = 'Échec';
+      view.track.removeAttribute('aria-valuenow');
+      view.track.setAttribute('aria-valuetext', 'Échec');
+      view.announcement.textContent = 'Échec du téléchargement.';
       showToast(error.message, true);
     }
   }
@@ -300,28 +334,6 @@
   }
 
   function initialize() {
-    const style = document.createElement('style');
-    style.textContent = `
-      .desktop-media-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}
-      .desktop-media-actions .primary,.desktop-media-actions .secondary{margin:0}
-      .desktop-download-progress{margin-top:16px;padding:14px 16px;border:1px solid #30445f;border-radius:14px;background:#0b1423;display:grid;gap:9px}
-      .desktop-download-header{display:flex;align-items:center;justify-content:space-between;gap:16px;color:#f8fafc}
-      .desktop-download-header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .desktop-download-header span{font-variant-numeric:tabular-nums;color:#8ee9df;white-space:nowrap}
-      .desktop-download-track{height:8px;border-radius:999px;background:#17243a;overflow:hidden;position:relative}
-      .desktop-download-track span{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#7c5cff,#30d2c3);transition:width .25s ease}
-      .desktop-download-track.indeterminate span{width:35%;position:absolute;animation:iptv-download-indeterminate 1.2s ease-in-out infinite}
-      .desktop-download-meta{color:#9fb0c7;font-size:13px;font-variant-numeric:tabular-nums}
-      .desktop-download-cancel{justify-self:start}
-      .episode.has-download{flex-wrap:wrap;gap:8px}
-      .episode-actions{display:flex;align-items:center;gap:7px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
-      .episode-actions .play-small{margin-left:0}
-      .episode-actions .secondary{padding:8px 10px}
-      .episode.has-download>.desktop-download-progress{flex:1 0 100%;width:100%;margin-top:4px}
-      @keyframes iptv-download-indeterminate{0%{left:-35%}100%{left:100%}}
-    `;
-    document.head.append(style);
-
     const content = document.querySelector('#detail-content');
     if (content) new MutationObserver(() => { decorateVodActions(); decorateSeriesActions(); }).observe(content, { childList: true, subtree: true });
     document.querySelector('#detail-dialog')?.addEventListener('close', () => { currentVod = null; currentSeries = null; });

@@ -11,7 +11,7 @@ public sealed record ProviderDraftView(string Id, string Name, string RequestedT
 public sealed record CategoryPolicyInput(string Mode, IReadOnlyList<string> SelectedIds);
 public sealed record ProviderSaveOptions(bool Enable, IReadOnlyDictionary<string, CategoryPolicyInput>? Policies = null);
 
-public sealed partial class ProviderOnboardingService(ISecretStore secrets, IProviderRepository providers, IProviderClientFactory clients)
+public sealed partial class ProviderOnboardingService(ISecretStore secrets, IProviderRepository providers, IRemoteProviderClientFactory clients)
 {
     private sealed record Draft(
         string Id,
@@ -26,6 +26,7 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
         IReadOnlyDictionary<CatalogType, IReadOnlyList<ProviderCategory>>? Categories = null);
 
     private readonly ConcurrentDictionary<string, Draft> _drafts = new(StringComparer.Ordinal);
+    private readonly SingleFlight<string, ProviderDraftView> _tests = new();
     private static readonly string[] StandardPortalPaths = ["/portal.php", "/server/load.php", "/stalker_portal/server/load.php"];
 
     public ProviderDraftView AddDraft(ProviderDraftInput input)
@@ -46,7 +47,15 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
         return View(draft);
     }
 
-    public async Task<ProviderDraftView> TestAsync(string draftId, CancellationToken cancellationToken = default)
+    public Task<ProviderDraftView> TestAsync(string draftId, CancellationToken cancellationToken = default)
+    {
+        var draft = GetDraft(draftId);
+        return draft.RequestedType == "xtream" || (draft.RequestedType == "auto" && HasXtream(draft.Secret) && !ValidMac().IsMatch(draft.Secret.MacAddress ?? string.Empty))
+            ? _tests.RunAsync(draftId, () => TestCoreAsync(draftId, CancellationToken.None), cancellationToken)
+            : TestCoreAsync(draftId, cancellationToken); // Preserve Stalker detection/cancellation behavior.
+    }
+
+    private async Task<ProviderDraftView> TestCoreAsync(string draftId, CancellationToken cancellationToken)
     {
         var draft = GetDraft(draftId);
         var attempts = new List<(ProviderType Type, string Portal)>();
@@ -58,9 +67,23 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
             var temporaryReference = await secrets.PutAsync(draft.Secret, cancellationToken);
             try
             {
-                var candidate = new ProviderRecord("probe-provider", attempt.Type, draft.Name, draft.ServerUri, temporaryReference, attempt.Portal);
+                var candidate = new ProviderRecord($"probe-{draft.Id}", attempt.Type, draft.Name, draft.ServerUri, temporaryReference, attempt.Portal);
                 var client = await clients.CreateAsync(candidate, cancellationToken);
                 var stopwatch = Stopwatch.StartNew();
+                if (attempt.Type == ProviderType.Xtream)
+                {
+                    // Explicit connection test: one account request, no category/catalog side effects.
+                    var checkedAccount = await client.GetAccountInfoAsync(cancellationToken);
+                    if (!checkedAccount.Authenticated) continue;
+                    draft = draft with
+                    {
+                        DetectedType = ProviderType.Xtream, Message = "Connection successful. Categories can be synchronized explicitly in Settings.",
+                        Diagnostic = new OnboardingDiagnosticView("Xtream", true, "Active", 0, 0, 0, stopwatch.ElapsedMilliseconds),
+                        Categories = Enum.GetValues<CatalogType>().ToDictionary(type => type, _ => (IReadOnlyList<ProviderCategory>)Array.Empty<ProviderCategory>())
+                    };
+                    _drafts[draft.Id] = draft;
+                    return View(draft);
+                }
                 var result = await client.TestConnectionAsync(cancellationToken);
                 if (!result.Success)
                 {
@@ -89,7 +112,11 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
             catch (HttpRequestException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → connexion HTTP interrompue après le profil"); }
             catch (System.Text.Json.JsonException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → JSON incompatible après le profil"); }
             catch (InvalidDataException) { if (attempt.Type == ProviderType.Stalker) failedAttempts.Add($"{attempt.Portal} → réponse incompatible après le profil"); }
-            finally { await secrets.DeleteAsync(temporaryReference, CancellationToken.None); }
+            finally
+            {
+                clients.Evict($"probe-{draft.Id}");
+                await secrets.DeleteAsync(temporaryReference, CancellationToken.None);
+            }
         }
         var failure = draft.RequestedType switch
         {

@@ -5,5 +5,6 @@
   "downloadUrl": "https://github.com/zhongfly/mpv-winbuild/releases/download/2026-09-27-a1bf4b6559/mpv-dev-lgpl-x86_64-20260927-git-a1bf4b6559.7z",
   "sha256": "cb6b6faeeefe4c23097f05666c2ad713942e53a1977f41276788edf362c65524",
   "expectedLibrary": "libmpv-2.dll",
+  "librarySha256": "6591b80908d550ff71dd2ffff96a5e8b213c8ad41cb09842b42ffee2c82980bf",
   "licenseLabel": "LGPLv2.1+ build (community-provided; see THIRD_PARTY_NOTICES.md)"
 }

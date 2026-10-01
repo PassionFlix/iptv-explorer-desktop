@@ -36,13 +36,28 @@ public partial class App : Application
             builder.Services.AddSingleton<RebuildJobRepository>();
             builder.Services.AddSingleton<AtomicSearchIndex>();
             builder.Services.AddSingleton<ISearchService, SearchService>();
-            builder.Services.AddSingleton<IProviderClientFactory, ProviderClientFactory>();
-            builder.Services.AddSingleton<ProviderOnboardingService>();
-            builder.Services.AddSingleton<ProviderManagementService>();
+            builder.Services.AddSingleton<IProviderLocalData, ProviderLocalDataStore>();
+            builder.Services.AddSingleton<SeriesArtworkRepository>();
+            builder.Services.AddSingleton<RecentSeriesArtwork>();
+            builder.Services.AddSingleton<CatalogSnapshotRepository>();
+            builder.Services.AddSingleton(TimeProvider.System);
+            builder.Services.AddSingleton<CatalogRefreshService>();
+            builder.Services.AddSingleton<MediaDetailService>();
+            builder.Services.AddSingleton<PlaybackHistoryRepository>();
+            builder.Services.AddSingleton<IPlaybackHistoryRepository>(sp => sp.GetRequiredService<PlaybackHistoryRepository>());
+            builder.Services.AddSingleton<IRemoteProviderClientFactory, ProviderClientFactory>();
+            builder.Services.AddSingleton<IProviderClientFactory, LocalProviderClientFactory>();
+            // Only explicit setup/settings operations receive the remote factory.
+            builder.Services.AddSingleton(sp => new ProviderOnboardingService(sp.GetRequiredService<ISecretStore>(),
+                sp.GetRequiredService<IProviderRepository>(), sp.GetRequiredService<IRemoteProviderClientFactory>()));
+            builder.Services.AddSingleton(sp => new ProviderManagementService(sp.GetRequiredService<IProviderRepository>(),
+                sp.GetRequiredService<ISecretStore>(), sp.GetRequiredService<IRemoteProviderClientFactory>(),
+                sp.GetRequiredService<IProviderLocalData>()));
             builder.Services.AddSingleton<IPlayerService, LibMpvPlayerService>();
             builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();
             builder.Services.AddSingleton<BridgeRouter>();
+            builder.Services.AddSingleton<MediaDownloadManager>();
             builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
             builder.Services.AddHttpClient("providers", ProviderHttpRegistration.Configure)
@@ -75,8 +90,11 @@ public partial class App : Application
     {
         if (_host is not null)
         {
+            await _host.Services.GetRequiredService<MediaDownloadManager>().ShutdownAsync(TimeSpan.FromSeconds(5));
+            await _host.Services.GetRequiredService<PlaybackCoordinator>().FlushAsync();
             await _host.StopAsync(TimeSpan.FromSeconds(5));
-            _host.Dispose();
+            if (_host is IAsyncDisposable asyncHost) await asyncHost.DisposeAsync();
+            else _host.Dispose();
         }
         base.OnExit(e);
     }

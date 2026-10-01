@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - phase-3-libmpv
+      - post-v1-ux-updates
   pull_request:
 
 permissions:
@@ -28,11 +29,36 @@ jobs:
       - name: Restore
         run: dotnet restore .\IPTVExplorer.Desktop.sln
 
+      - name: Ensure 7-Zip for pinned libmpv
+        shell: pwsh
+        run: |
+          if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+            choco install 7zip --no-progress -y
+          }
+
+      - name: Test pinned libmpv tooling (local fixtures)
+        shell: pwsh
+        run: .\scripts\Test-LibMpvRuntime.ps1
+
       - name: Build
         run: dotnet build .\IPTVExplorer.Desktop.sln -c Release --no-restore
 
+      - name: Verify native player runtime
+        shell: pwsh
+        run: |
+          $runtime = '.\src\IPTVExplorer.Desktop\bin\Release\net10.0-windows10.0.19041.0\win-x64\native\mpv\libmpv-2.dll'
+          if (-not (Test-Path -LiteralPath $runtime)) { throw "Runtime libmpv absent du build : $runtime" }
+          if ((Get-Item -LiteralPath $runtime).Length -le 0) { throw "Runtime libmpv vide : $runtime" }
+
       - name: Test
         run: dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build --logger "console;verbosity=normal"
+
+      - name: Test passive artwork and catalog DOM (no network)
+        run: node --test tests/ui/home-artwork.test.cjs tests/ui/home-backdrop.test.cjs tests/ui/catalog-cache.test.cjs tests/ui/media-actions.test.cjs tests/ui/theme-onboarding.test.cjs tests/ui/version-ui.test.cjs
+
+      - name: Test changelog release tooling
+        shell: pwsh
+        run: .\scripts\Test-ReleaseNotes.ps1
 
       - name: Whitespace check
         shell: bash
