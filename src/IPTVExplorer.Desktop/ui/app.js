@@ -299,7 +299,11 @@
       const list = node('div', 'episode-list');
       season.episodes.forEach(episode => {
         const row = node('div', 'episode'); const number = episode.episode ? `E${String(episode.episode).padStart(2, '0')} — ` : '';
-        row.append(node('span', '', `${number}${episode.title}`), button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension, title: episode.title, posterUrl: detail.poster, seriesTitle: detail.title, season: episode.season ?? season.number, episode: episode.episode }, episode.title))); list.append(row);
+        const main = node('div', 'episode-main');
+        const actions = node('div', 'episode-actions');
+        actions.append(button('Lire', 'play-small', () => openPlayer({ providerKey, mediaType: 'series', mediaId: detail.id, episodeId: episode.id, extension: episode.extension, title: episode.title, posterUrl: detail.poster, seriesTitle: detail.title, season: episode.season ?? season.number, episode: episode.episode }, episode.title)));
+        main.append(node('span', 'episode-info', `${number}${episode.title}`), actions);
+        row.append(main); list.append(row);
       });
       block.append(list); section.append(block);
     });

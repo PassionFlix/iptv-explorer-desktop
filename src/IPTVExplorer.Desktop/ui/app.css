@@ -277,7 +277,10 @@
 
 .desktop-download-progress {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px;
+  width: 100%;
+  min-width: 0;
   margin-top: 16px;
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--line) 72%, var(--accent2));
@@ -296,7 +299,7 @@
 
 .desktop-download-header strong {
   min-width: 0;
-  max-width: calc(100% - 70px);
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -332,28 +335,47 @@
 }
 
 .desktop-download-meta {
+  min-width: 0;
   color: var(--muted);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.desktop-download-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
 }
 
 .desktop-download-cancel {
+  flex: 0 0 auto;
   min-height: 34px;
-  justify-self: start;
   padding: 7px 11px;
 }
 
-#detail-content .episode.has-download {
+#detail-content .episode {
+  display: block;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+#detail-content .episode-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px 14px;
-  padding: 11px 10px;
+  min-width: 0;
+  width: 100%;
 }
 
-#detail-content .episode.has-download > span {
+#detail-content .episode-info {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #detail-content .episode-actions {
@@ -379,10 +401,9 @@
 }
 
 #detail-content .episode.has-download > .desktop-download-progress {
-  grid-column: 1 / -1;
   width: 100%;
   min-width: 0;
-  margin: 2px 0 4px;
+  margin: 10px 0 4px;
   padding: 11px 13px;
   border-radius: 11px;
 }
@@ -390,6 +411,11 @@
 @keyframes iptv-download-indeterminate {
   0% { left: -35%; }
   100% { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-download-track span { transition: none; }
+  .desktop-download-track.indeterminate span { animation: none; }
 }
 
 @media (max-width: 760px) {
@@ -420,7 +446,7 @@
     flex-direction: column;
   }
 
-  #detail-content .episode.has-download {
+  #detail-content .episode-main {
     grid-template-columns: 1fr;
   }
 

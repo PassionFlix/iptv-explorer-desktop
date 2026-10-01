@@ -32,6 +32,7 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Fixed
 
+- Amélioration de la disposition et du suivi des téléchargements d’épisodes.
 - Les affiches verticales utilisées comme fond d’accueil conservent désormais leur cadrage dans une composition sombre dédiée, sans zoom ni appel fournisseur supplémentaire.
 - Reprise appliquée au bon timecode après le chargement effectif du média (`FILE_LOADED`).
 - Lecture de nouveau possible après l’utilisation de Stop.
