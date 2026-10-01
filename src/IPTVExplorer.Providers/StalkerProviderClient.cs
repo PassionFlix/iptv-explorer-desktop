@@ -140,8 +140,9 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         var command = await ResolveCommandAsync(request, cancellationToken);
         var parameters = new List<(string, string)> { ("cmd", command) };
         if (request.Catalog == CatalogType.Series) parameters.Add(("series", "1"));
-        // Episode resolution intentionally uses vod/create_link with series=1.
-        using var document = await PortalAsync("vod", "create_link", parameters, cancellationToken);
+        var portalType = request.Catalog == CatalogType.Live ? "itv" : "vod";
+        // Episodes intentionally use vod/create_link with series=1; live channels use itv/create_link.
+        using var document = await PortalAsync(portalType, "create_link", parameters, cancellationToken);
         var root = document.RootElement.Unwrap();
         var resolvedCommand = root.ValueKind == JsonValueKind.Object ? root.Text("cmd", "url") : root.ToString();
         var url = ExtractHttpUri(resolvedCommand);
