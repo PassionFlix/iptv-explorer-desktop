@@ -12,6 +12,7 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     private readonly SemaphoreSlim _handshake = new(1, 1);
     private readonly SemaphoreSlim _liveCatalogLock = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(CatalogType Catalog, string Id), string> _commands = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Task<IReadOnlyList<LiveChannel>>>> _liveCategoryFallbacks = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, VodDetails> _vodDetails = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _categoryStructures = new(StringComparer.Ordinal);
     private IReadOnlyList<LiveChannel>? _liveChannels;
@@ -75,7 +76,18 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     public async Task<IReadOnlyList<CatalogItem>> GetLiveAsync(string categoryId, CancellationToken cancellationToken = default)
     {
         var channels = await GetAllLiveChannelsAsync(cancellationToken);
-        return channels.Where(channel => string.Equals(channel.GenreId, categoryId, StringComparison.Ordinal)).Select(channel => channel.Item).ToArray();
+        var matching = channels.Where(channel => string.Equals(channel.GenreId, categoryId, StringComparison.Ordinal)).Select(channel => channel.Item).ToArray();
+        if (matching.Length > 0) return matching;
+
+        var fallback = _liveCategoryFallbacks.GetOrAdd(categoryId, id => new Lazy<Task<IReadOnlyList<LiveChannel>>>(
+            () => GetOrderedLiveCategoryAsync(id, CancellationToken.None), LazyThreadSafetyMode.ExecutionAndPublication));
+        try { return (await fallback.Value.WaitAsync(cancellationToken)).Select(channel => channel.Item).ToArray(); }
+        catch
+        {
+            if (_liveCategoryFallbacks.TryGetValue(categoryId, out var current) && ReferenceEquals(current, fallback))
+                _liveCategoryFallbacks.TryRemove(categoryId, out _);
+            throw;
+        }
     }
 
     public Task<CatalogPage<CatalogItem>> GetVodPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => OrderedList("vod", CatalogType.Vod, categoryId, page, cancellationToken);
@@ -206,6 +218,35 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         {
             _liveCatalogLock.Release();
         }
+    }
+
+    private async Task<IReadOnlyList<LiveChannel>> GetOrderedLiveCategoryAsync(string categoryId, CancellationToken cancellationToken)
+    {
+        var channels = new List<LiveChannel>();
+        var page = 1;
+        var totalPages = 1;
+        do
+        {
+            using var document = await PortalAsync("itv", "get_ordered_list",
+                [("genre", categoryId), ("fav", "0"), ("p", page.ToString(CultureInfo.InvariantCulture)), ("from_ch_id", "0")], cancellationToken);
+            var root = document.RootElement.Unwrap();
+            foreach (var raw in ReadRawItems(root))
+            {
+                var item = JsonSupport.Item(raw, CatalogType.Live) with { CategoryId = categoryId };
+                if (item.Id.Length == 0) continue;
+                CacheCommand(raw, CatalogType.Live, item.Id);
+                channels.Add(new LiveChannel(categoryId, item));
+            }
+            if (page == 1 && root.ValueKind == JsonValueKind.Object)
+            {
+                var total = int.TryParse(root.Text("total_items", "total"), out var itemCount) ? Math.Max(0, itemCount) : channels.Count;
+                var size = int.TryParse(root.Text("max_page_items"), out var pageSize) && pageSize > 0 ? pageSize : Math.Max(1, channels.Count);
+                totalPages = Math.Clamp((int)Math.Ceiling(total / (double)size), 1, 10000);
+            }
+            page++;
+        }
+        while (page <= totalPages);
+        return channels;
     }
 
     private async Task<CatalogPage<CatalogItem>> OrderedList(string type, CatalogType catalog, string categoryId, int page, CancellationToken cancellationToken)
