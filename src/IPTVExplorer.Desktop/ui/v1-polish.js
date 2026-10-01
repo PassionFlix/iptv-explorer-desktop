@@ -21,9 +21,6 @@
       mark.appendChild(image);
     }
 
-    const subtitle = document.querySelector('.brand small');
-    if (subtitle) subtitle.textContent = 'Desktop · 1.0.0';
-
     const orb = document.querySelector('.orb');
     if (orb && !orb.querySelector('img')) {
       orb.textContent = '';

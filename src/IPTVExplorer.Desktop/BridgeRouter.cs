@@ -21,7 +21,6 @@ public sealed class BridgeRouter(
     IPlaybackHistoryRepository playbackHistory,
     ISecretStore secrets,
     PlaybackCoordinator playback,
-    AppPaths paths,
     ILogger<BridgeRouter> logger,
     CatalogSnapshotRepository snapshots,
     CatalogRefreshService catalogRefresh,
@@ -112,8 +111,7 @@ public sealed class BridgeRouter(
         var preferences = await settings.GetAsync(cancellationToken);
         var active = list.FirstOrDefault(provider => provider.Enabled && provider.Key == preferences.ActiveProviderKey)?.Key ?? list.FirstOrDefault(provider => provider.Enabled)?.Key;
         if (active != preferences.ActiveProviderKey) await settings.SaveAsync(preferences with { ActiveProviderKey = active }, cancellationToken);
-        var version = typeof(BridgeRouter).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-        return new { product = "IPTV Explorer Desktop", version, providerCount = list.Count, activeProviderKey = active, providers = list.Select(SafeProvider) };
+        return new { product = "IPTV Explorer Desktop", version = ApplicationVersion.Display, providerCount = list.Count, activeProviderKey = active, providers = list.Select(SafeProvider) };
     }
 
     private async Task<object> SetActiveProvider(ActiveProviderRequest input, CancellationToken cancellationToken)
@@ -188,9 +186,7 @@ public sealed class BridgeRouter(
     private async Task<object> DeleteProvider(DeleteProviderRequest input, CancellationToken cancellationToken)
     {
         if (!input.Confirmed) throw new InvalidOperationException("Explicit confirmation is required.");
-        await management.DeleteAsync(input.ProviderKey, input.RemoveLocalData, paths.SearchIndex(input.ProviderKey), cancellationToken);
-        var preferences = await settings.GetAsync(cancellationToken);
-        if (preferences.ActiveProviderKey == input.ProviderKey) await settings.SaveAsync(preferences with { ActiveProviderKey = null }, cancellationToken);
+        await management.DeleteAsync(input.ProviderKey, input.RemoveLocalData, cancellationToken);
         return new { deleted = true };
     }
 

@@ -130,14 +130,14 @@ public sealed class PersistenceAndIndexTests
         var originalReference = await secrets.PutAsync(new ProviderSecret("fixture-user", "fixture-password"));
         var provider = await database.AddProviderAsync(secretReference: originalReference);
         var factory = new ProviderClientFactory(new StubHttpClientFactory(new SuccessfulXtreamHandler()), secrets);
-        var management = new ProviderManagementService(database.Repository, secrets, factory);
+        var management = new ProviderManagementService(database.Repository, secrets, factory, new ProviderLocalDataStore(database.Paths));
 
         var updated = await management.UpdateAsync(provider.Key, new("Renamed Fixture", "https://example.invalid/base", null, null, null));
         Assert.Null(await secrets.GetAsync(originalReference));
         Assert.Equal("fixture-password", (await secrets.GetAsync(updated.SecretReference))?.Password);
         Assert.Equal("Renamed Fixture", (await database.Repository.GetAsync(provider.Key))?.Name);
 
-        await management.DeleteAsync(provider.Key, removeLocalData: false, indexPath: null);
+        await management.DeleteAsync(provider.Key, removeLocalData: false);
         Assert.Null(await secrets.GetAsync(updated.SecretReference));
         Assert.Null(await database.Repository.GetAsync(provider.Key));
     }

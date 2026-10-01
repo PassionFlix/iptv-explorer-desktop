@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '1.0.0',
+    [string]$Version,
     [string]$Configuration = 'Release',
     [string]$Runtime = 'win-x64',
     [string]$OutputRoot,
@@ -16,6 +16,11 @@ $OutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $project = Join-Path $repoRoot 'src\IPTVExplorer.Desktop\IPTVExplorer.Desktop.csproj'
 $solution = Join-Path $repoRoot 'IPTVExplorer.Desktop.sln'
 $mpvDll = Join-Path $repoRoot 'src\IPTVExplorer.Desktop\native\mpv\libmpv-2.dll'
+$versioning = Join-Path $PSScriptRoot 'Versioning.ps1'
+. $versioning
+$declaredVersion = Get-ProjectVersion -PropsPath (Join-Path $repoRoot 'Directory.Build.props')
+if ([string]::IsNullOrWhiteSpace($Version)) { $Version = $declaredVersion }
+Assert-RequestedProjectVersion -RequestedVersion $Version -ProjectVersion $declaredVersion
 $packageName = "IPTV-Explorer-$Version-$Runtime"
 $publishDir = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot ($packageName + '.zip')
@@ -31,14 +36,6 @@ function Get-Sha256([string]$Path) {
         $algorithm.Dispose()
         $stream.Dispose()
     }
-}
-
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version invalide : $Version" }
-
-[xml]$props = Get-Content -LiteralPath (Join-Path $repoRoot 'Directory.Build.props') -Raw
-$declaredVersion = [string]$props.Project.PropertyGroup.Version
-if ($declaredVersion -ne $Version) {
-    throw "La version demandée ($Version) ne correspond pas à Directory.Build.props ($declaredVersion)."
 }
 
 if (-not (Test-Path -LiteralPath $mpvDll)) {

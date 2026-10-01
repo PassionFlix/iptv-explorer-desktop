@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
+using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
 using Microsoft.Web.WebView2.Core;
 
@@ -27,7 +28,7 @@ public partial class MainWindow : Window
     private static HttpClient CreateUpdateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("IPTV-Explorer-Desktop/1.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"IPTV-Explorer-Desktop/{ApplicationVersion.Display}");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }
@@ -126,14 +127,14 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(releaseUrl) ||
                 !releaseUrl.StartsWith(ReleasesPrefix, StringComparison.OrdinalIgnoreCase)) return;
 
+            if (!ApplicationVersion.IsNewerRelease(tag)) return;
             var normalized = tag.StartsWith('v') ? tag[1..] : tag;
-            var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0, 0);
-            if (!Version.TryParse(normalized, out var latest) || latest <= current) return;
+            var latest = Version.Parse(normalized);
 
             var payload = JsonSerializer.Serialize(new
             {
                 version = latest.ToString(3),
-                currentVersion = current.ToString(3),
+                currentVersion = ApplicationVersion.Display,
                 url = releaseUrl
             });
             var script = $"window.dispatchEvent(new CustomEvent('iptv-update-available', {{ detail: {payload} }}));";

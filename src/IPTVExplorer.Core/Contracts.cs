@@ -48,6 +48,11 @@ public interface IProviderClientFactory
     Task<IProviderClient> CreateAsync(ProviderRecord provider, CancellationToken cancellationToken = default);
 }
 
+public interface IProviderLocalData
+{
+    Task DeleteSearchIndexAsync(string providerKey, CancellationToken cancellationToken = default);
+}
+
 public interface ISearchService
 {
     Task<CatalogPage<SearchHit>> SearchAsync(string? providerKey, CatalogType catalog, string query, int page, int pageSize, CancellationToken cancellationToken = default);
@@ -55,7 +60,10 @@ public interface ISearchService
 }
 
 // Explicit network operations use this factory. Ordinary application reads use IProviderClientFactory.
-public interface IRemoteProviderClientFactory : IProviderClientFactory { }
+public interface IRemoteProviderClientFactory : IProviderClientFactory
+{
+    void Evict(string providerKey) { }
+}
 
 public interface IPlaybackHistoryRepository
 {

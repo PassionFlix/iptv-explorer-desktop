@@ -431,7 +431,7 @@ public sealed class ProviderFixtureTests
         Assert.Equal(0, tested.Diagnostic?.Series);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5));
         var provider = await service.SaveAsync(draft.Id, new ProviderSaveOptions(false));
-        await new ProviderManagementService(database.Repository, secretStore, factory).SyncCategoriesAsync(provider.Key);
+        await new ProviderManagementService(database.Repository, secretStore, factory, new ProviderLocalDataStore(database.Paths)).SyncCategoriesAsync(provider.Key);
         await database.Repository.SaveCategoryPolicyAsync(provider.Key, CatalogType.Vod, new(CategoryPolicyMode.Custom, new HashSet<string> { "vod-2" }));
         await database.Repository.SaveCategoryPolicyAsync(provider.Key, CatalogType.Series, new(CategoryPolicyMode.None, new HashSet<string>()));
         Assert.False(provider.Enabled);

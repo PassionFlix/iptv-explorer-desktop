@@ -32,6 +32,8 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Fixed
 
+- Correction de la préparation des futures versions et de l’affichage de version.
+- Sécurisation de la suppression des fournisseurs et de leurs données locales.
 - Amélioration de la disposition et du suivi des téléchargements d’épisodes.
 - Les affiches verticales utilisées comme fond d’accueil conservent désormais leur cadrage dans une composition sombre dédiée, sans zoom ni appel fournisseur supplémentaire.
 - Reprise appliquée au bon timecode après le chargement effectif du média (`FILE_LOADED`).

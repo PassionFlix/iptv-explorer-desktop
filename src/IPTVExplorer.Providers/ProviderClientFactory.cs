@@ -18,6 +18,12 @@ public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecre
         };
     }
 
+    public void Evict(string providerKey)
+    {
+        if (!ProviderKey.IsValid(providerKey)) throw new ArgumentException("Invalid provider key.", nameof(providerKey));
+        _stalkerClients.TryRemove(providerKey, out _);
+    }
+
     private StalkerProviderClient StalkerClient(ProviderRecord provider, ProviderSecret secret)
     {
         // This factory is a singleton: keep one client for the lifetime of a provider configuration
@@ -38,8 +44,8 @@ public sealed class ProviderClientFactory(IHttpClientFactory httpClients, ISecre
 
 public static class ProviderHttpRegistration
 {
-    public const string AppUserAgent = "IPTVExplorerDesktop/1.0";
-    public const string MediaUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVExplorerDesktop/1.0";
+    public static string AppUserAgent => $"IPTVExplorerDesktop/{ApplicationVersion.Display}";
+    public static string MediaUserAgent => $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTVExplorerDesktop/{ApplicationVersion.Display}";
 
     public static void Configure(HttpClient client)
     {

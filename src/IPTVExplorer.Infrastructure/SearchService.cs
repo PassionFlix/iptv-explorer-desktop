@@ -100,7 +100,7 @@ public sealed class AtomicSearchIndex(AppPaths paths)
     {
         var destination = paths.SearchIndex(providerKey);
         var temporary = destination + ".tmp";
-        await DeleteIndexFamilyAsync(temporary, includeDatabase: true, cancellationToken);
+        await SearchIndexFileAccess.DeleteFamilyAsync(temporary, includeDatabase: true, cancellationToken);
         var builder = new SqliteConnectionStringBuilder { DataSource = temporary, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
         await using (var connection = new SqliteConnection(builder.ConnectionString))
         {
@@ -124,12 +124,12 @@ public sealed class AtomicSearchIndex(AppPaths paths)
 
         using var indexLease = await SearchIndexFileAccess.EnterWriteAsync(destination, cancellationToken);
         SearchIndexFileAccess.ClearReadPool(destination);
-        await DeleteIndexFamilyAsync(temporary, includeDatabase: false, cancellationToken);
-        await DeleteIndexFamilyAsync(destination, includeDatabase: false, cancellationToken);
+        await SearchIndexFileAccess.DeleteFamilyAsync(temporary, includeDatabase: false, cancellationToken);
+        await SearchIndexFileAccess.DeleteFamilyAsync(destination, includeDatabase: false, cancellationToken);
         if (File.Exists(destination))
         {
             var backup = destination + ".previous";
-            await DeleteIndexFamilyAsync(backup, includeDatabase: true, cancellationToken);
+            await SearchIndexFileAccess.DeleteFamilyAsync(backup, includeDatabase: true, cancellationToken);
             await ReplaceWithRetryAsync(temporary, destination, backup, cancellationToken);
             await TryDeleteIndexFamilyAsync(backup, cancellationToken);
         }
@@ -173,35 +173,11 @@ public sealed class AtomicSearchIndex(AppPaths paths)
         }
     }
 
-    private static async Task DeleteIndexFamilyAsync(string path, bool includeDatabase, CancellationToken cancellationToken)
-    {
-        if (includeDatabase) await DeleteWithRetryAsync(path, cancellationToken);
-        await DeleteWithRetryAsync(path + "-wal", cancellationToken);
-        await DeleteWithRetryAsync(path + "-shm", cancellationToken);
-        await DeleteWithRetryAsync(path + "-journal", cancellationToken);
-    }
-
-    private static async Task DeleteWithRetryAsync(string path, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                File.Delete(path);
-                return;
-            }
-            catch (IOException) when (attempt < 3)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken);
-            }
-        }
-    }
-
     private static async Task TryDeleteIndexFamilyAsync(string path, CancellationToken cancellationToken)
     {
         try
         {
-            await DeleteIndexFamilyAsync(path, includeDatabase: true, cancellationToken);
+            await SearchIndexFileAccess.DeleteFamilyAsync(path, includeDatabase: true, cancellationToken);
         }
         catch (IOException)
         {

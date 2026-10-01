@@ -41,6 +41,21 @@ public sealed class ProviderFactoryTests
         Assert.NotSame(first, replacement);
     }
 
+    [Fact]
+    public async Task ProviderFactoryEvictsStalkerClientAndSessionState()
+    {
+        var secrets = new InMemorySecretStore();
+        var reference = await secrets.PutAsync(new(MacAddress: "00:00:00:00:00:00"));
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(), secrets);
+        var provider = new ProviderRecord("fixture-provider", ProviderType.Stalker, "Fixture", new Uri("https://example.invalid"), reference);
+        var first = await factory.CreateAsync(provider);
+
+        factory.Evict(provider.Key);
+        var second = await factory.CreateAsync(provider);
+
+        Assert.NotSame(first, second);
+    }
+
     [Theory]
     [InlineData("valid-key", true)]
     [InlineData("a", true)]

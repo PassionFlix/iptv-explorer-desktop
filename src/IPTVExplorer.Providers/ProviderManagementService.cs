@@ -5,7 +5,11 @@ namespace IPTVExplorer.Providers;
 
 public sealed record ProviderUpdateInput(string Name, string ServerUrl, string? Username, string? Password, string? MacAddress);
 
-public sealed class ProviderManagementService(IProviderRepository providers, ISecretStore secrets, IProviderClientFactory clients)
+public sealed class ProviderManagementService(
+    IProviderRepository providers,
+    ISecretStore secrets,
+    IRemoteProviderClientFactory clients,
+    IProviderLocalData localData)
 {
     private readonly SingleFlight<string, ProviderDiagnostic> _diagnostics = new();
     private readonly SingleFlight<string, bool> _categorySync = new();
@@ -100,12 +104,14 @@ public sealed class ProviderManagementService(IProviderRepository providers, ISe
         await providers.SetEnabledAsync(providerKey, enabled, cancellationToken);
     }
 
-    public async Task DeleteAsync(string providerKey, bool removeLocalData, string? indexPath, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(string providerKey, bool removeLocalData, CancellationToken cancellationToken = default)
     {
         var provider = await RequiredProvider(providerKey, cancellationToken);
-        await secrets.DeleteAsync(provider.SecretReference, CancellationToken.None);
+        clients.Evict(providerKey);
+        if (removeLocalData) await localData.DeleteSearchIndexAsync(providerKey, cancellationToken);
         await providers.DeleteAsync(providerKey, cancellationToken);
-        if (removeLocalData && indexPath is not null) File.Delete(indexPath);
+        clients.Evict(providerKey);
+        await secrets.DeleteAsync(provider.SecretReference, CancellationToken.None);
     }
 
     private async Task<ProviderRecord> RequiredProvider(string key, CancellationToken cancellationToken) => await providers.GetAsync(key, cancellationToken) ?? throw new KeyNotFoundException("Provider was not found.");

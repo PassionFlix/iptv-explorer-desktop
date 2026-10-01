@@ -36,6 +36,7 @@ public partial class App : Application
             builder.Services.AddSingleton<RebuildJobRepository>();
             builder.Services.AddSingleton<AtomicSearchIndex>();
             builder.Services.AddSingleton<ISearchService, SearchService>();
+            builder.Services.AddSingleton<IProviderLocalData, ProviderLocalDataStore>();
             builder.Services.AddSingleton<SeriesArtworkRepository>();
             builder.Services.AddSingleton<RecentSeriesArtwork>();
             builder.Services.AddSingleton<CatalogSnapshotRepository>();
@@ -50,7 +51,8 @@ public partial class App : Application
             builder.Services.AddSingleton(sp => new ProviderOnboardingService(sp.GetRequiredService<ISecretStore>(),
                 sp.GetRequiredService<IProviderRepository>(), sp.GetRequiredService<IRemoteProviderClientFactory>()));
             builder.Services.AddSingleton(sp => new ProviderManagementService(sp.GetRequiredService<IProviderRepository>(),
-                sp.GetRequiredService<ISecretStore>(), sp.GetRequiredService<IRemoteProviderClientFactory>()));
+                sp.GetRequiredService<ISecretStore>(), sp.GetRequiredService<IRemoteProviderClientFactory>(),
+                sp.GetRequiredService<IProviderLocalData>()));
             builder.Services.AddSingleton<IPlayerService, LibMpvPlayerService>();
             builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();

@@ -3,10 +3,10 @@
 #define MyAppExeName "IPTVExplorer.Desktop.exe"
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #error AppVersion must be supplied by scripts\Publish-Release.ps1
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\dist\IPTV-Explorer-1.0.0-win-x64"
+  #error SourceDir must be supplied by scripts\Publish-Release.ps1
 #endif
 #ifndef OutputDir
   #define OutputDir "..\dist"

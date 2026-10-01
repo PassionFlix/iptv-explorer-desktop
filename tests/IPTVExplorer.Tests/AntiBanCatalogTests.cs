@@ -440,12 +440,12 @@ public sealed class AntiBanCatalogTests
             await new AppSettingsRepository(database.Connections).SaveAsync(new(ActiveProviderKey: provider.Key));
             var http = new CountingHttp(); var remote = new ProviderClientFactory(new StubHttpClientFactory(http), secrets);
             var snapshots = new CatalogSnapshotRepository(database.Connections); var local = new LocalProviderClientFactory(remote, snapshots, database.Repository);
-            var f = new Fixture { Database = database, Provider = provider, Secrets = secrets, Http = http, Remote = remote, Local = local, Snapshots = snapshots, Management = new(database.Repository, secrets, remote) };
+            var f = new Fixture { Database = database, Provider = provider, Secrets = secrets, Http = http, Remote = remote, Local = local, Snapshots = snapshots, Management = new(database.Repository, secrets, remote, new ProviderLocalDataStore(database.Paths)) };
             f.Refresh = f.NewRefresh(); var artwork = new RecentSeriesArtwork(new(database.Connections));
             f.Details = new(remote, snapshots, secrets, artwork);
             f.Router = new(database.Repository, local, null!, f.Management, new AppSettingsRepository(database.Connections),
                 new RebuildJobRepository(database.Connections), new SearchService(database.Paths), artwork, new PlaybackHistoryRepository(database.Connections),
-                secrets, null!, database.Paths, NullLogger<BridgeRouter>.Instance, snapshots, f.Refresh, f.Details);
+                secrets, null!, NullLogger<BridgeRouter>.Instance, snapshots, f.Refresh, f.Details);
             return f;
         }
         public CatalogRefreshService NewRefresh() => new(Database.Repository, Remote, Secrets, Snapshots, new(Database.Connections), Clock);

@@ -49,6 +49,8 @@
   async function refreshApp(goHome = false) {
     state.app = await rpc('app.getState');
     state.activeProviderKey = state.app.activeProviderKey;
+    const brandVersion = $('.brand small');
+    if (brandVersion) brandVersion.textContent = state.app.version ? `Desktop · ${state.app.version}` : 'Desktop';
     renderProviderSelector(); renderProviderSettings();
     if (goHome) navigate('home'); else await renderHome();
     // Render local data first; the background session task never blocks opening/navigation.
