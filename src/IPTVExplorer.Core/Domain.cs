@@ -22,7 +22,13 @@ public sealed record ProviderRecord(
 public sealed record ProviderSecret(string? Username = null, string? Password = null, string? MacAddress = null);
 public sealed record ProviderCategory(string RemoteId, string Name, string NormalizedName, bool Selected = true, bool Present = true, bool NeedsReview = false, DateTimeOffset? LastSeen = null, bool Technical = false);
 public sealed record CategoryPolicy(CategoryPolicyMode Mode, IReadOnlySet<string> SelectedIds);
-public sealed record AccountInfo(bool Authenticated, string? Status, DateTimeOffset? ExpiresAt);
+public sealed record AccountInfo(
+    bool Authenticated,
+    string? Status,
+    DateTimeOffset? ExpiresAt,
+    int? ActiveConnections = null,
+    int? MaxConnections = null,
+    IReadOnlyList<string>? AllowedOutputFormats = null);
 public sealed record ConnectionTestResult(bool Success, ProviderType? DetectedType, string Message);
 public sealed record CatalogItem(string Id, string Title, string? ImageUrl = null, string? Extension = null, JsonElement? Metadata = null, string? Year = null, double? Rating = null, DateTimeOffset? AddedAt = null, string? BackdropUrl = null,
     string? CategoryId = null, string? Plot = null, string? Genre = null, string? Director = null, string? Cast = null, string? Duration = null);
@@ -45,7 +51,25 @@ public sealed record VodDetails(string Id, string Title, string? Poster, string?
 public sealed record EpisodeDetails(string Id, string Title, int? Season, int? Episode, string? Extension);
 public sealed record SeasonDetails(int Number, string Title, IReadOnlyList<EpisodeDetails> Episodes);
 public sealed record SeriesDetails(string Id, string Title, string? Poster, string? Plot, string? Year, string? Genre, string? Director, string? Cast, double? Rating, IReadOnlyList<SeasonDetails> Seasons);
-public sealed record ProviderDiagnostic(ProviderType Type, string Host, string Api, bool AccountOk, int LiveCategories, int VodCategories, int SeriesCategories, long LatencyMs, string Message, DateTimeOffset CheckedAt);
+public sealed record ProviderDiagnostic(
+    ProviderType Type,
+    string Host,
+    string Api,
+    bool AccountOk,
+    int LiveCategories,
+    int VodCategories,
+    int SeriesCategories,
+    long LatencyMs,
+    string Message,
+    DateTimeOffset CheckedAt,
+    DateTimeOffset? ExpiresAt = null,
+    string? AccountStatus = null,
+    string? IdentityLabel = null,
+    string? MaskedIdentity = null,
+    string? CredentialState = null,
+    int? ActiveConnections = null,
+    int? MaxConnections = null,
+    IReadOnlyList<string>? AllowedOutputFormats = null);
 public sealed record CategorySummary(CatalogType Catalog, CategoryPolicyMode Mode, int Selected, int Total, int Missing, bool IndexDirty);
 public sealed record IndexJobSnapshot(long Id, string ProviderKey, RebuildJobStatus Status, long Current, long Total, string Label, long VodItems, long SeriesItems, string? Error, DateTimeOffset CreatedAt);
 public sealed record AppPreferences(string? ActiveProviderKey = null, string InterfaceLanguage = "auto", string Theme = "system", string AudioLanguage = "auto", string SecondaryAudioLanguage = "auto", string SubtitleLanguage = "auto", bool AutomaticForcedSubtitles = true);

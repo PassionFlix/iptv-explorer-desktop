@@ -114,10 +114,8 @@ test('Xtream onboarding omits misleading zero catalog counters while Stalker kee
   function node(tag, className = '', textContent = '') {
     return { tag, className, textContent, children: [], append(...children) { this.children.push(...children); } };
   }
-  const context = { node, document: { createTextNode: textContent => ({ textContent }) } };
-  const diagnosticSource = app.match(/^  function renderDiagnostic.*$/m);
-  assert.ok(diagnosticSource, 'Production function not found: renderDiagnostic');
-  runInNewContext(diagnosticSource[0], context);
+  const context = { node, document: { createTextNode: textContent => ({ textContent }) }, Intl, Date, Number };
+  runInNewContext(`${production('formatDiagnosticExpiration')}\n${production('renderDiagnostic')}`, context);
   const data = { authenticated: true, account: 'Active', live: 3, vod: 4, series: 5, latencyMs: 12 };
 
   const xtream = JSON.stringify(context.renderDiagnostic({ ...data, type: 'Xtream', live: 0, vod: 0, series: 0 }, true));
@@ -128,6 +126,23 @@ test('Xtream onboarding omits misleading zero catalog counters while Stalker kee
   assert.match(stalker, /Live/);
   assert.match(stalker, /Films/);
   assert.match(stalker, /Séries/);
+});
+
+test('diagnostic renders safe account state, expiration and masked identity without Compte 0', () => {
+  function node(tag, className = '', textContent = '') {
+    return { tag, className, textContent, children: [], append(...children) { this.children.push(...children); } };
+  }
+  const context = { node, document: { createTextNode: textContent => ({ textContent }) }, Intl, Date, Number };
+  runInNewContext(`${production('formatDiagnosticExpiration')}\n${production('renderDiagnostic')}`, context);
+  const rendered = JSON.stringify(context.renderDiagnostic({
+    type: 'Stalker', authenticated: true, accountStatus: null, expiresAt: '2027-05-08T18:25:00Z',
+    host: 'provider.invalid', api: '/portal.php', identityLabel: 'MAC', maskedIdentity: '00:1A:79:••:••:••',
+    live: 3, vod: 4, series: 5, latencyMs: 12
+  }));
+  assert.match(rendered, /Compte valide/);
+  assert.match(rendered, /8 mai 2027/);
+  assert.match(rendered, /00:1A:79:••:••:••/);
+  assert.doesNotMatch(rendered, /Compte 0|Compte 1/);
 });
 
 test('onboarding copy accurately distinguishes minimal Xtream validation from Stalker categories', () => {

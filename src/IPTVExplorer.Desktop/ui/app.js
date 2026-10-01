@@ -380,7 +380,32 @@
     } catch (error) { if (!isAbort(error)) diagnostic.replaceChildren(node('p', 'form-error', error.message)); }
     finally { $('#test-provider').disabled = false; }
   });
-  function renderDiagnostic(data, onboarding = false) { const grid = node('div', 'diagnostic-grid'); if (!data) return grid; const values = [[data.type, 'Type détecté'], [data.authenticated ? '✓' : '✕', `Compte ${data.account}`]]; const xtreamOnboarding = onboarding && String(data.type).toLowerCase() === 'xtream'; if (!xtreamOnboarding) values.push([data.live, 'Live'], [data.vod, 'Films'], [data.series, 'Séries']); values.push([`${data.latencyMs} ms`, 'Latence']); values.forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); }); if (xtreamOnboarding) grid.append(node('span', 'muted', 'Catalogue local après activation')); if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails)); return grid; }
+  function formatDiagnosticExpiration(value) {
+    if (!value) return 'non fournie';
+    const date = new Date(value); if (Number.isNaN(date.getTime())) return 'non fournie';
+    return new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(date).replace(' à ', ' ');
+  }
+  function renderDiagnostic(data, onboarding = false) {
+    const grid = node('div', 'diagnostic-grid'); if (!data) return grid;
+    const authenticated = data.authenticated ?? data.accountOk;
+    const values = [[data.type, 'Type fournisseur'], [authenticated ? 'Compte valide' : 'Compte rejeté', 'Authentification']];
+    if (!authenticated && data.message) values.push([data.message, 'Diagnostic']);
+    if (data.accountStatus && !/^\d+$/.test(String(data.accountStatus))) values.push([data.accountStatus, 'Statut fournisseur']);
+    values.push([formatDiagnosticExpiration(data.expiresAt), 'Expiration']);
+    if (data.host || data.api) values.push([[data.host, data.api].filter(Boolean).join(' · '), 'Endpoint / API']);
+    if (data.maskedIdentity) values.push([data.maskedIdentity, data.identityLabel || 'Compte']);
+    if (data.credentialState) values.push([data.credentialState, 'Mot de passe']);
+    if (data.activeConnections !== null && data.activeConnections !== undefined) values.push([data.activeConnections, 'Connexions actives']);
+    if (data.maxConnections !== null && data.maxConnections !== undefined) values.push([data.maxConnections, 'Connexions maximales']);
+    if (data.allowedOutputFormats?.length) values.push([data.allowedOutputFormats.join(', '), 'Formats autorisés']);
+    const xtreamOnboarding = onboarding && String(data.type).toLowerCase() === 'xtream';
+    if (!xtreamOnboarding) values.push([data.live ?? data.liveCategories, 'Live'], [data.vod ?? data.vodCategories, 'Films'], [data.series ?? data.seriesCategories, 'Séries']);
+    values.push([`${data.latencyMs} ms`, 'Latence']);
+    values.forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); });
+    if (xtreamOnboarding) grid.append(node('span', 'muted', 'Catalogue local après activation'));
+    if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails));
+    return grid;
+  }
   $$('.onboarding-tabs button').forEach(value => value.addEventListener('click', () => { $$('.onboarding-tabs button').forEach(buttonValue => buttonValue.classList.remove('active')); value.classList.add('active'); state.onboarding.catalog = value.dataset.onboardingCatalog; renderOnboardingCategories(); }));
   $('#onboarding-filter').addEventListener('input', renderOnboardingCategories);
   $('#onboarding-all').addEventListener('click', () => { const model = state.onboarding.policies[state.onboarding.catalog]; model.selected = new Set(model.items.map(item => item.remoteId)); model.mode = 'all'; renderOnboardingCategories(); });
@@ -403,7 +428,7 @@
     if (!state.app.providers.length) { list.append(node('p', 'muted', 'Aucun fournisseur configuré.')); return; }
     state.app.providers.forEach(provider => { const card = node('article', 'provider-card'); const copy = node('div'); copy.append(node('strong', '', provider.name), node('p', '', `${provider.type.toUpperCase()} · ${provider.serverUrl}`)); const actions = node('div', 'provider-actions'); actions.append(button('Diagnostic', 'secondary', () => diagnose(provider)), button('Modifier', 'secondary', () => openEdit(provider)), button(provider.enabled ? 'Désactiver' : 'Activer', 'secondary', () => toggleProvider(provider)), button('Supprimer', 'danger-button', () => deleteProvider(provider))); card.append(copy, actions); list.append(card); });
   }
-  async function diagnose(provider) { const panel = $('#diagnostic-panel'); panel.classList.remove('hidden'); panel.replaceChildren(node('p', 'muted', 'Diagnostic en cours…')); try { const result = await rpc('providers.diagnose', { providerKey: provider.key }, 'diagnostic'); panel.replaceChildren(node('h3', '', `Diagnostic · ${provider.name}`), renderDiagnostic({ type: result.type, authenticated: result.accountOk, account: result.message, live: result.liveCategories, vod: result.vodCategories, series: result.seriesCategories, latencyMs: result.latencyMs })); } catch (error) { panel.replaceChildren(node('p', 'form-error', error.message)); } }
+  async function diagnose(provider) { const panel = $('#diagnostic-panel'); panel.classList.remove('hidden'); panel.replaceChildren(node('p', 'muted', 'Diagnostic en cours…')); try { const result = await rpc('providers.diagnose', { providerKey: provider.key }, 'diagnostic'); panel.replaceChildren(node('h3', '', `Diagnostic · ${provider.name}`), renderDiagnostic(result)); } catch (error) { panel.replaceChildren(node('p', 'form-error', error.message)); } }
   async function toggleProvider(provider) { try { await rpc('providers.setEnabled', { providerKey: provider.key, enabled: !provider.enabled }, 'provider-action'); await refreshApp(); toast(provider.enabled ? 'Fournisseur désactivé.' : 'Fournisseur activé.'); } catch (error) { toast(error.message, true); } }
   function openEdit(provider) { const form = $('#edit-form'); form.reset(); form.elements.providerKey.value = provider.key; form.elements.name.value = provider.name; form.elements.serverUrl.value = provider.serverUrl; $('#edit-xtream').classList.toggle('hidden', provider.type !== 'xtream'); $('#edit-stalker').classList.toggle('hidden', provider.type !== 'stalker'); $('#edit-error').textContent = ''; $('#edit-dialog').showModal(); }
   $('#edit-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; try { await rpc('providers.update', { providerKey: form.elements.providerKey.value, name: form.elements.name.value, serverUrl: form.elements.serverUrl.value, username: form.elements.username.value || null, password: form.elements.password.value || null, macAddress: form.elements.macAddress.value || null }, 'provider-action'); form.elements.password.value = ''; form.elements.macAddress.value = ''; $('#edit-dialog').close(); await refreshApp(); toast('Fournisseur mis à jour.'); } catch (error) { form.elements.password.value = ''; form.elements.macAddress.value = ''; $('#edit-error').textContent = error.message; } });

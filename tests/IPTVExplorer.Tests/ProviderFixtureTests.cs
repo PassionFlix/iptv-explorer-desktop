@@ -41,6 +41,39 @@ public sealed class ProviderFixtureTests
         Assert.Equal("*/*", resolved.Headers?["Accept"]);
         Assert.DoesNotContain(resolved.Headers!, pair => pair.Value.Contains(XtreamSecret.Password!, StringComparison.Ordinal));
         Assert.DoesNotContain(resolved.Headers!, pair => pair.Key.Contains("token", StringComparison.OrdinalIgnoreCase));
+        var account = await client.GetAccountInfoAsync();
+        Assert.Equal(2, account.ActiveConnections);
+        Assert.Equal(4, account.MaxConnections);
+        Assert.Equal(["ts", "m3u8"], account.AllowedOutputFormats);
+        Assert.NotNull(account.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task XtreamDiagnosticIncludesAccountDetailsButOnlyMaskedCredentials()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var secrets = new InMemorySecretStore();
+        var secretReference = await secrets.PutAsync(new ProviderSecret("nicolas", "fixture-password"));
+        var provider = await database.AddProviderAsync(ProviderType.Xtream, secretReference);
+        using var handler = new StaticJsonHandler("{\"user_info\":{\"auth\":1,\"status\":\"Active\",\"exp_date\":1800000000,\"active_cons\":2,\"max_connections\":4,\"allowed_output_formats\":[\"ts\",\"m3u8\"]}}");
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(handler), secrets);
+        var service = new ProviderManagementService(database.Repository, secrets, factory, new ProviderLocalDataStore(database.Paths));
+
+        var diagnostic = await service.DiagnoseAsync(provider.Key);
+        var serialized = System.Text.Json.JsonSerializer.Serialize(diagnostic);
+
+        Assert.True(diagnostic.AccountOk);
+        Assert.Equal("Compte valide", diagnostic.Message);
+        Assert.Equal("Active", diagnostic.AccountStatus);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_800_000_000), diagnostic.ExpiresAt);
+        Assert.Equal("Identifiant", diagnostic.IdentityLabel);
+        Assert.Equal("ni••••as", diagnostic.MaskedIdentity);
+        Assert.Equal("Configuré", diagnostic.CredentialState);
+        Assert.Equal(2, diagnostic.ActiveConnections);
+        Assert.Equal(4, diagnostic.MaxConnections);
+        Assert.Equal(["ts", "m3u8"], diagnostic.AllowedOutputFormats);
+        Assert.DoesNotContain("nicolas", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-password", serialized, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -462,7 +495,7 @@ public sealed class ProviderFixtureTests
             var action = Parameter(request.RequestUri, "action");
             var json = action switch
             {
-                null => "{\"user_info\":{\"auth\":1,\"status\":\"Active\",\"exp_date\":1999999999},\"server_info\":{\"url\":\"example.invalid\"}}",
+                null => "{\"user_info\":{\"auth\":1,\"status\":\"Active\",\"exp_date\":1999999999,\"active_cons\":2,\"max_connections\":4,\"allowed_output_formats\":[\"ts\",\"m3u8\"]},\"server_info\":{\"url\":\"example.invalid\"}}",
                 "get_live_categories" => "[{\"category_id\":\"10\",\"category_name\":\"Live Fixture\"}]",
                 "get_vod_categories" => "[{\"category_id\":\"20\",\"category_name\":\"Films Fixture\"}]",
                 "get_series_categories" => "[{\"category_id\":\"30\",\"category_name\":\"Series Fixture\"}]",

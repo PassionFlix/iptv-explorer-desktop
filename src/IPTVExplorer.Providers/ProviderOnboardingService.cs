@@ -6,7 +6,25 @@ using IPTVExplorer.Core;
 namespace IPTVExplorer.Providers;
 
 public sealed record ProviderDraftInput(string Name, string ProviderType, string ServerUrl, string? Username, string? Password, string? MacAddress);
-public sealed record OnboardingDiagnosticView(string Type, bool Authenticated, string Account, int Live, int Vod, int Series, long LatencyMs, string? ProtocolDetails = null);
+public sealed record OnboardingDiagnosticView(
+    string Type,
+    bool Authenticated,
+    string Account,
+    int Live,
+    int Vod,
+    int Series,
+    long LatencyMs,
+    string? ProtocolDetails = null,
+    DateTimeOffset? ExpiresAt = null,
+    string? AccountStatus = null,
+    string? Host = null,
+    string? Api = null,
+    string? IdentityLabel = null,
+    string? MaskedIdentity = null,
+    string? CredentialState = null,
+    int? ActiveConnections = null,
+    int? MaxConnections = null,
+    IReadOnlyList<string>? AllowedOutputFormats = null);
 public sealed record ProviderDraftView(string Id, string Name, string RequestedType, string ServerUrl, ProviderType? DetectedType, string CredentialStatus, string? Message, OnboardingDiagnosticView? Diagnostic, IReadOnlyDictionary<string, IReadOnlyList<ProviderCategory>> Categories);
 public sealed record CategoryPolicyInput(string Mode, IReadOnlyList<string> SelectedIds);
 public sealed record ProviderSaveOptions(bool Enable, IReadOnlyDictionary<string, CategoryPolicyInput>? Policies = null);
@@ -75,10 +93,15 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
                     // Explicit connection test: one account request, no category/catalog side effects.
                     var checkedAccount = await client.GetAccountInfoAsync(cancellationToken);
                     if (!checkedAccount.Authenticated) continue;
+                    var xtreamIdentity = ProviderDiagnosticSafety.Identity(ProviderType.Xtream, draft.Secret);
                     draft = draft with
                     {
                         DetectedType = ProviderType.Xtream, Message = "Connection successful. Categories can be synchronized explicitly in Settings.",
-                        Diagnostic = new OnboardingDiagnosticView("Xtream", true, "Active", 0, 0, 0, stopwatch.ElapsedMilliseconds),
+                        Diagnostic = new OnboardingDiagnosticView("Xtream", true, "valide", 0, 0, 0, stopwatch.ElapsedMilliseconds,
+                            ExpiresAt: checkedAccount.ExpiresAt, AccountStatus: ProviderDiagnosticSafety.MeaningfulStatus(checkedAccount.Status),
+                            Host: draft.ServerUri.Host, Api: "player_api.php", IdentityLabel: xtreamIdentity.Label, MaskedIdentity: xtreamIdentity.Value,
+                            CredentialState: xtreamIdentity.CredentialState, ActiveConnections: checkedAccount.ActiveConnections,
+                            MaxConnections: checkedAccount.MaxConnections, AllowedOutputFormats: checkedAccount.AllowedOutputFormats),
                         Categories = Enum.GetValues<CatalogType>().ToDictionary(type => type, _ => (IReadOnlyList<ProviderCategory>)Array.Empty<ProviderCategory>())
                     };
                     _drafts[draft.Id] = draft;
@@ -102,7 +125,13 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
                     [CatalogType.Series] = series
                 };
                 var protocolDetails = client is StalkerProviderClient stalker ? stalker.CategoryDiagnostic : null;
-                var diagnostic = new OnboardingDiagnosticView(attempt.Type == ProviderType.Xtream ? "Xtream" : "Stalker / MAG", account.Authenticated, account.Status ?? "Non communiqué", live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds, protocolDetails);
+                var identity = ProviderDiagnosticSafety.Identity(attempt.Type, draft.Secret);
+                var diagnostic = new OnboardingDiagnosticView(attempt.Type == ProviderType.Xtream ? "Xtream" : "Stalker / MAG",
+                    account.Authenticated, account.Authenticated ? "valide" : "rejeté", live.Count(c => !c.Technical),
+                    vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds, protocolDetails,
+                    account.ExpiresAt, ProviderDiagnosticSafety.MeaningfulStatus(account.Status), draft.ServerUri.Host, attempt.Portal,
+                    identity.Label, identity.Value, identity.CredentialState, account.ActiveConnections, account.MaxConnections,
+                    account.AllowedOutputFormats);
                 draft = draft with { DetectedType = attempt.Type, PortalPath = attempt.Portal, Message = "Connection successful.", Diagnostic = diagnostic, Categories = categories };
                 _drafts[draft.Id] = draft;
                 return View(draft);

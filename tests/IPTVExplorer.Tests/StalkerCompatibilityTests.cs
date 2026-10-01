@@ -223,6 +223,9 @@ public sealed class StalkerCompatibilityTests
         Assert.Equal(ProviderType.Stalker, tested.DetectedType);
         Assert.Equal(1, handler.ProfileRequests);
         Assert.Equal(1, handler.MainInfoRequests);
+        Assert.Equal("MAC", tested.Diagnostic?.IdentityLabel);
+        Assert.Equal("00:1A:79:••:••:••", tested.Diagnostic?.MaskedIdentity);
+        Assert.DoesNotContain(Mac, System.Text.Json.JsonSerializer.Serialize(tested.Diagnostic), StringComparison.Ordinal);
         Assert.Equal(["100"], tested.Categories["live"].Select(category => category.RemoteId));
         Assert.Equal(["200"], tested.Categories["vod"].Select(category => category.RemoteId));
         Assert.Equal(["300"], tested.Categories["series"].Select(category => category.RemoteId));

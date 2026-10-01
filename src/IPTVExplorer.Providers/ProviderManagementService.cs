@@ -25,25 +25,36 @@ public sealed class ProviderManagementService(
     {
         var provider = await RequiredProvider(providerKey, cancellationToken);
         var client = await clients.CreateAsync(provider, cancellationToken);
+        var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken) ?? new ProviderSecret();
+        var identity = ProviderDiagnosticSafety.Identity(provider.Type, secret);
         var stopwatch = Stopwatch.StartNew();
         if (provider.Type == ProviderType.Xtream)
         {
             var manualAccount = await client.GetAccountInfoAsync(cancellationToken);
             var local = await providers.GetCategorySummariesAsync(providerKey, cancellationToken);
+            stopwatch.Stop();
             return new(provider.Type, provider.ServerUri.Host, ApiName(provider), manualAccount.Authenticated,
                 local.FirstOrDefault(item => item.Catalog == CatalogType.Live)?.Total ?? 0,
                 local.FirstOrDefault(item => item.Catalog == CatalogType.Vod)?.Total ?? 0,
                 local.FirstOrDefault(item => item.Catalog == CatalogType.Series)?.Total ?? 0,
-                stopwatch.ElapsedMilliseconds, manualAccount.Authenticated ? "Compte validé · catégories locales" : "Authentification refusée", DateTimeOffset.UtcNow);
+                stopwatch.ElapsedMilliseconds, manualAccount.Authenticated ? "Compte valide" : "Compte rejeté", DateTimeOffset.UtcNow,
+                manualAccount.ExpiresAt, ProviderDiagnosticSafety.MeaningfulStatus(manualAccount.Status), identity.Label, identity.Value,
+                identity.CredentialState, manualAccount.ActiveConnections, manualAccount.MaxConnections, manualAccount.AllowedOutputFormats);
         }
         var test = await client.TestConnectionAsync(cancellationToken);
-        if (!test.Success) return new ProviderDiagnostic(provider.Type, provider.ServerUri.Host, ApiName(provider), false, 0, 0, 0, stopwatch.ElapsedMilliseconds, test.Message, DateTimeOffset.UtcNow);
+        if (!test.Success) return new ProviderDiagnostic(provider.Type, provider.ServerUri.Host, ApiName(provider), false, 0, 0, 0,
+            stopwatch.ElapsedMilliseconds, test.Message, DateTimeOffset.UtcNow, AccountStatus: null,
+            IdentityLabel: identity.Label, MaskedIdentity: identity.Value, CredentialState: identity.CredentialState);
         var account = await client.GetAccountInfoAsync(cancellationToken);
         var live = await client.GetLiveCategoriesAsync(cancellationToken);
         var vod = await client.GetVodCategoriesAsync(cancellationToken);
         var series = await client.GetSeriesCategoriesAsync(cancellationToken);
         stopwatch.Stop();
-        return new ProviderDiagnostic(provider.Type, provider.ServerUri.Host, ApiName(provider), account.Authenticated, live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds, account.Status ?? (account.Authenticated ? "Active" : "Authentication rejected"), DateTimeOffset.UtcNow);
+        return new ProviderDiagnostic(provider.Type, provider.ServerUri.Host, ApiName(provider), account.Authenticated,
+            live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds,
+            account.Authenticated ? "Compte valide" : "Compte rejeté", DateTimeOffset.UtcNow, account.ExpiresAt,
+            ProviderDiagnosticSafety.MeaningfulStatus(account.Status), identity.Label, identity.Value, identity.CredentialState,
+            account.ActiveConnections, account.MaxConnections, account.AllowedOutputFormats);
     }
 
     public async Task SyncCategoriesAsync(string providerKey, CancellationToken cancellationToken = default)
