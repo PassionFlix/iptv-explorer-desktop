@@ -31,6 +31,14 @@ try {
     Assert-True ($one -match '(?m)^## \[1\.0\.0\] - 2026-09-28$') 'section 1.0.0 absente ou datée incorrectement.'
     Assert-True ($one -notmatch '(?m)^## \[Unreleased\]') 'la section précédente a été incluse.'
 
+    # 2. La section réelle 1.1.0 est extraite seule et reste lisible pour GitHub Releases.
+    $currentOutput = Join-Path $temporaryRoot '1.1.0.md'
+    & $extractor -Version '1.1.0' -ChangelogPath (Join-Path $repoRoot 'CHANGELOG.md') -OutputPath $currentOutput | Out-Null
+    $current = Get-Content -LiteralPath $currentOutput -Raw
+    Assert-True ($current -match '(?m)^## \[1\.1\.0\] - 2026-09-30$') 'section 1.1.0 absente ou datée incorrectement.'
+    Assert-True ($current -match 'Nouvel accueil') 'les notes 1.1.0 ne contiennent pas les changements utilisateur attendus.'
+    Assert-True ($current -notmatch '(?m)^## \[(?:Unreleased|1\.0\.0)\]') 'les notes 1.1.0 incluent une autre section.'
+
     $fixture = Join-Path $temporaryRoot 'fixture.md'
     [System.IO.File]::WriteAllText($fixture, @'
 # Changelog
@@ -52,28 +60,28 @@ try {
 ### Added
 '@, [System.Text.UTF8Encoding]::new($false))
 
-    # 2. Une version fictive est extraite avec son titre et son contenu.
+    # 3. Une version fictive est extraite avec son titre et son contenu.
     $fixtureOutput = Join-Path $temporaryRoot '9.9.9.md'
     & $extractor -Version '9.9.9' -ChangelogPath $fixture -OutputPath $fixtureOutput | Out-Null
     $fiction = Get-Content -LiteralPath $fixtureOutput -Raw
     Assert-True ($fiction -match '(?m)^## \[9\.9\.9\] - 2099-01-02$') 'titre fictif absent.'
     Assert-True ($fiction -match 'Fonction fictive') 'contenu fictif absent.'
 
-    # 3. L'extraction s'arrête avant la section suivante.
+    # 4. L'extraction s'arrête avant la section suivante.
     Assert-True ($fiction -notmatch '8\.8\.8|Cette section ne doit pas') 'la section suivante a été incluse.'
 
-    # 4. Une version inexistante échoue explicitement.
+    # 5. Une version inexistante échoue explicitement.
     Assert-Throws { & $extractor -Version '6.6.6' -ChangelogPath $fixture -OutputPath (Join-Path $temporaryRoot 'missing.md') | Out-Null } 'Aucune section CHANGELOG'
 
-    # 5. Une section ne contenant que des sous-titres est considérée vide.
+    # 6. Une section ne contenant que des sous-titres est considérée vide.
     Assert-Throws { & $extractor -Version '7.7.7' -ChangelogPath $fixture -OutputPath (Join-Path $temporaryRoot 'empty.md') | Out-Null } 'est vide'
 
-    # 6. Le workflow ne peut plus revenir aux notes 1.0.0 codées en dur.
+    # 7. Le workflow ne peut plus revenir aux notes 1.0.0 codées en dur.
     $workflow = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\release.yml') -Raw
     Assert-True (-not $workflow.Contains('release-notes-v1.0.0.md', [StringComparison]::OrdinalIgnoreCase)) 'ancienne note codée en dur encore référencée.'
     Assert-True ($workflow.Contains('Get-ReleaseNotes.ps1', [StringComparison]::Ordinal)) 'extracteur absent du workflow.'
 
-    Write-Host 'Tests changelog/release notes : 6 réussis.'
+    Write-Host 'Tests changelog/release notes : 7 réussis.'
 }
 finally {
     if (Test-Path -LiteralPath $temporaryRoot) { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force }

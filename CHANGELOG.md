@@ -8,6 +8,16 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Security
+
+## [1.1.0] - 2026-09-30
+
+### Added
+
 - Nouvel accueil avec raccourcis, état local du fournisseur et informations d’index plus lisibles.
 - Reprise de lecture avec une section « Continuer à regarder » et mémorisation locale de la progression.
 - Carrousels des Films et Séries récemment ajoutés.
@@ -25,18 +35,18 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 - Plein écran amélioré sur les configurations multi-écrans et les écrans avec mise à l’échelle DPI.
 - Navigation Xtream désormais principalement locale : Live, Films, Séries, pagination, recherche et contenus récents utilisent les snapshots enregistrés.
 - Actualisation Xtream limitée à trois appels catalogue maximum, exécutés successivement, avec un délai de 30 minutes après un succès.
-- Reconstruction de l’index Xtream effectuée uniquement à partir du snapshot local.
+- Reconstruction de l’index local Xtream effectuée uniquement à partir du snapshot local.
 - Fiches de séries chargées depuis le fournisseur uniquement après une action explicite, puis réutilisées depuis le cache.
 - Appels automatiques au fournisseur fortement réduits ; aucune réparation réseau automatique des affiches ou arrière-plans.
 - Comportement de Lecture et Stop rendu plus prévisible dans le lecteur natif.
-- Compatibilité de mise à niveau depuis la base et l’index publics 1.0.0 davantage couverte et vérifiée.
+- Compatibilité de migration SQLite depuis la base et l’index publics 1.0.0 davantage couverte et vérifiée.
 
 ### Fixed
 
 - Le thème « Système » suit désormais correctement le thème clair ou sombre de Windows.
 - Clarification de l’étape de connexion Xtream lors de l’ajout d’un fournisseur.
 - Sécurisation du runtime libmpv lors des builds et packages de release grâce à la vérification des empreintes de l’archive et de la DLL.
-- Nettoyage correct des téléchargements à leur fin ou lors de la fermeture de l’application.
+- Nettoyage correct des téléchargements de Films et d’épisodes à leur fin ou lors de la fermeture de l’application.
 - Protection étendue des informations sensibles et des signatures d’URL dans les journaux.
 - Correction de la préparation des futures versions et de l’affichage de version.
 - Sécurisation de la suppression des fournisseurs et de leurs données locales.

@@ -29,19 +29,23 @@ public sealed class VersioningTests
         var app = File.ReadAllText(Path.Combine(ui, "app.js"));
         var polish = File.ReadAllText(Path.Combine(ui, "v1-polish.js"));
 
-        Assert.DoesNotContain("Desktop · 1.0.0", html, StringComparison.Ordinal);
-        Assert.DoesNotContain("Desktop · 1.0.0", polish, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"Desktop · \d+\.\d+\.\d+", html);
+        Assert.DoesNotMatch(@"Desktop · \d+\.\d+\.\d+", polish);
         Assert.Contains("state.app.version", app, StringComparison.Ordinal);
         Assert.Contains("Desktop · ${state.app.version}", app, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void UpdateComparisonUsesCurrentAssemblyVersion()
+    [Theory]
+    [InlineData("v1.0.0", false)]
+    [InlineData("v1.1.0", false)]
+    [InlineData("v1.1.1", true)]
+    [InlineData("v1.2.0", true)]
+    [InlineData("v2.0.0", true)]
+    [InlineData("not-a-version", false)]
+    public void UpdateComparisonUsesRelease110AssemblyVersion(string releaseTag, bool expected)
     {
-        var current = ApplicationVersion.Current;
-        Assert.False(ApplicationVersion.IsNewerRelease($"v{current.ToString(3)}"));
-        Assert.True(ApplicationVersion.IsNewerRelease($"v{current.Major}.{current.Minor}.{current.Build + 1}"));
-        Assert.False(ApplicationVersion.IsNewerRelease("not-a-version"));
+        Assert.Equal("1.1.0", ApplicationVersion.Display);
+        Assert.Equal(expected, ApplicationVersion.IsNewerRelease(releaseTag));
     }
 
     private static string RepositoryRoot()

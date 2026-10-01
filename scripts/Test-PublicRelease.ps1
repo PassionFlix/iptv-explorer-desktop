@@ -77,7 +77,7 @@ try {
     if ($installerScript -notmatch 'AppVersion must be supplied' -or $installerScript -notmatch 'SourceDir must be supplied') {
         throw 'IPTVExplorer.iss doit refuser une compilation sans paramètres de packaging.'
     }
-    if ($indexHtml.Contains('Desktop · 1.0.0') -or $polishScript.Contains('Desktop · 1.0.0')) {
+    if ($indexHtml -match 'Desktop · \d+\.\d+\.\d+' -or $polishScript -match 'Desktop · \d+\.\d+\.\d+') {
         throw 'La version UI est encore codée en dur.'
     }
     if ($appScript -notmatch 'state\.app\.version' -or $appScript -notmatch 'Desktop · \$\{state\.app\.version\}') {
