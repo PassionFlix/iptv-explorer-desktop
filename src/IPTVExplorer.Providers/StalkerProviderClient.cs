@@ -146,7 +146,25 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         var root = document.RootElement.Unwrap();
         var resolvedCommand = root.ValueKind == JsonValueKind.Object ? root.Text("cmd", "url") : root.ToString();
         var url = ExtractHttpUri(resolvedCommand);
-        return url is null ? throw new InvalidDataException("Provider did not return a playable link.") : new ResolvedMedia(url);
+        if (url is null) throw new InvalidDataException("Provider did not return a playable link.");
+        if (request.Catalog != CatalogType.Live) return new ResolvedMedia(url);
+
+        var originalUrl = ExtractHttpUri(command);
+        if (originalUrl is null) return new ResolvedMedia(url);
+
+        var resolvedQuery = QueryValues(url);
+        if (!resolvedQuery.TryGetValue("stream", out var resolvedStream) || !string.IsNullOrEmpty(resolvedStream))
+            return new ResolvedMedia(url);
+
+        var originalQuery = QueryValues(originalUrl);
+        if (!originalQuery.TryGetValue("stream", out var originalStream) || string.IsNullOrWhiteSpace(originalStream))
+            return new ResolvedMedia(url);
+
+        if (!resolvedQuery.TryGetValue("play_token", out var playToken) || string.IsNullOrWhiteSpace(playToken))
+            throw new InvalidDataException("Provider did not return a live playback token.");
+
+        var hybridUrl = BuildHybridLiveUri(originalUrl, resolvedQuery);
+        return new ResolvedMedia(hybridUrl, BuildLivePlaybackHeaders(playToken));
     }
 
     private async Task<IReadOnlyList<ProviderCategory>> GetCategories(string type, CancellationToken cancellationToken)
@@ -553,6 +571,70 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         var value = command[start..].Split(' ', '\t', '\r', '\n').First();
         return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri : null;
     }
+
+    private static Dictionary<string, string> QueryValues(Uri uri)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            var name = Uri.UnescapeDataString(parts[0].Replace("+", " ", StringComparison.Ordinal));
+            var value = parts.Length == 2 ? Uri.UnescapeDataString(parts[1].Replace("+", " ", StringComparison.Ordinal)) : string.Empty;
+            values[name] = value;
+        }
+        return values;
+    }
+
+    private static Uri BuildHybridLiveUri(Uri originalUrl, IReadOnlyDictionary<string, string> resolvedQuery)
+    {
+        var original = originalUrl.OriginalString;
+        var fragmentIndex = original.IndexOf('#');
+        if (fragmentIndex >= 0) original = original[..fragmentIndex];
+        var queryIndex = original.IndexOf('?');
+        var baseUrl = queryIndex >= 0 ? original[..queryIndex] : original;
+        var rawQuery = queryIndex >= 0 ? original[(queryIndex + 1)..] : string.Empty;
+        var parts = new List<string>();
+
+        foreach (var pair in rawQuery.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = pair.IndexOf('=');
+            var rawName = separator >= 0 ? pair[..separator] : pair;
+            var name = Uri.UnescapeDataString(rawName.Replace("+", " ", StringComparison.Ordinal));
+            if (string.Equals(name, "play_token", StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(name, "sn2", StringComparison.OrdinalIgnoreCase) && resolvedQuery.ContainsKey("sn2")) continue;
+            parts.Add(pair);
+        }
+
+        if (resolvedQuery.TryGetValue("sn2", out var sn2))
+            parts.Add($"sn2={Uri.EscapeDataString(sn2)}");
+
+        var value = parts.Count == 0 ? baseUrl : $"{baseUrl}?{string.Join('&', parts)}";
+        return new Uri(value, UriKind.Absolute);
+    }
+
+    private IReadOnlyDictionary<string, string> BuildLivePlaybackHeaders(string playToken)
+    {
+        var sessionToken = _token;
+        if (string.IsNullOrWhiteSpace(sessionToken)) throw new InvalidDataException("Stalker session token is unavailable for live playback.");
+        if (sessionToken.Any(character => character is '\r' or '\n' or '\0') || playToken.Any(character => character is '\r' or '\n' or '\0'))
+            throw new InvalidDataException("Stalker playback token is invalid.");
+
+        var mac = NormalizeMac(secret.MacAddress);
+        var userAgent = _requestProfile == RequestProfile.Mag254Compatible
+            ? "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG254 stbapp ver: 2 rev: 250 Safari/533.3"
+            : "Mozilla/5.0 MAG254 stbapp";
+
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["User-Agent"] = userAgent,
+            ["X-User-Agent"] = "Model: MAG254; Link: Ethernet",
+            ["Accept"] = "*/*",
+            ["Referer"] = provider.ServerUri.GetLeftPart(UriPartial.Authority) + "/c/",
+            ["Cookie"] = $"mac={mac}; stb_lang=en; timezone=Europe/Paris; token={sessionToken}; play_token={playToken}",
+            ["Authorization"] = $"Bearer {sessionToken}"
+        };
+    }
+
     private static double? ParseRating(string? value) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rating) ? rating : null;
     private enum RequestProfile { Legacy, Mag254Compatible }
     private sealed record LiveChannel(string GenreId, CatalogItem Item);
