@@ -23,6 +23,7 @@ public sealed class StalkerCompatibilityTests
         Assert.Equal(1, handler.LegacyHandshakes);
         Assert.Equal(0, handler.MagHandshakes);
         Assert.All(handler.Requests, request => Assert.Equal("Mozilla/5.0 MAG254 stbapp", request.UserAgent));
+        Assert.DoesNotContain(handler.Requests.Single(request => request.Action == "get_profile").Parameters, pair => pair.Key == "stb_type");
     }
 
     [Theory]
@@ -58,16 +59,52 @@ public sealed class StalkerCompatibilityTests
     }
 
     [Fact]
-    public async Task ExpiredMagSessionReauthenticatesOnceWithoutRepeatingDetection()
+    public async Task MagSessionBootstrapsFullProfileBeforeCatalogAndReusesItForAccount()
     {
-        var handler = new CompatibilityHandler(HandshakeFailure.EmptyBody) { RejectFirstProfileToken = true };
+        var handler = new CompatibilityHandler(HandshakeFailure.EmptyBody);
         using var http = new HttpClient(handler);
-        var account = await new StalkerProviderClient(Provider, Secret, http).GetAccountInfoAsync();
+        var client = new StalkerProviderClient(Provider, Secret, http);
+
+        Assert.Single(await client.GetLiveAsync("100"));
+        _ = await client.GetLiveCategoriesAsync();
+        var account = await client.GetAccountInfoAsync();
 
         Assert.True(account.Authenticated);
         Assert.Equal(1, handler.LegacyHandshakes);
+        Assert.Equal(1, handler.MagHandshakes);
+        Assert.Equal(1, handler.ProfileRequests);
+        var magRequests = handler.Requests.Where(request => request.IsMag).ToArray();
+        Assert.Equal(["handshake", "get_profile", "get_all_channels", "get_genres", "get_main_info"], magRequests.Select(request => request.Action));
+
+        var profile = Assert.Single(magRequests, request => request.Action == "get_profile");
+        Assert.Equal("Bearer mag-token-1", profile.Authorization);
+        Assert.Equal("MAG254", profile.Parameters["stb_type"]);
+        Assert.Equal("218", profile.Parameters["image_version"]);
+        Assert.Equal("8E5585F5E64F679EB40", profile.Parameters["sn"]);
+        Assert.Equal("DC02B881C50D145E370C4EFC04B8BB24A824816BA6BBA7F4A80CCAEBB183C81B", profile.Parameters["device_id"]);
+        Assert.Equal("21DA59C248805FDF0F36FA2C4CA4569E10D1F80268D8104C7AF8BB776D657ED8", profile.Parameters["device_id2"]);
+        Assert.Equal("289CCA57DB723456CA8610EA5C8DF672A93BDF61E0AA6EAAAE1FC53C28E52769", profile.Parameters["signature"]);
+        Assert.Equal("1-xml", profile.Parameters["JsHttpRequest"]);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task ExpiredMagSessionRebootstrapsOnceBeforeReplayingOperation(HttpStatusCode rejection)
+    {
+        var handler = new CompatibilityHandler(HandshakeFailure.EmptyBody) { FirstGenresRejection = rejection };
+        using var http = new HttpClient(handler);
+        var client = new StalkerProviderClient(Provider, Secret, http);
+
+        Assert.True((await client.GetAccountInfoAsync()).Authenticated);
+        Assert.NotEmpty(await client.GetLiveCategoriesAsync());
+
+        Assert.Equal(1, handler.LegacyHandshakes);
         Assert.Equal(2, handler.MagHandshakes);
         Assert.Equal(["Bearer mag-token-1", "Bearer mag-token-2"], handler.Requests.Where(request => request.Action == "get_profile").Select(request => request.Authorization));
+        Assert.Equal(
+            ["handshake", "get_profile", "get_main_info", "get_genres", "handshake", "get_profile", "get_genres"],
+            handler.Requests.Where(request => request.IsMag).Select(request => request.Action));
     }
 
     [Fact]
@@ -240,12 +277,13 @@ public sealed class StalkerCompatibilityTests
         public int ProfileRequests { get; private set; }
         public int MainInfoRequests { get; private set; }
         public bool RejectMagHandshake { get; init; }
-        public bool RejectFirstProfileToken { get; init; }
+        public HttpStatusCode? FirstGenresRejection { get; init; }
         public bool CrossHostLegacyRedirect { get; init; }
         public string ProfileJson { get; init; } = "{\"js\":{\"id\":\"profile-1\",\"auth\":1,\"blocked\":0,\"status\":\"Enabled\"}}";
         public string MainInfoJson { get; init; } = "{\"js\":{}}";
         public HttpStatusCode MainInfoStatus { get; init; } = HttpStatusCode.OK;
         public List<RequestSnapshot> Requests { get; } = [];
+        private bool _firstGenresRejected;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -256,7 +294,6 @@ public sealed class StalkerCompatibilityTests
             if (action == "get_profile")
             {
                 ProfileRequests++;
-                if (RejectFirstProfileToken && snapshot.Authorization == "Bearer mag-token-1") return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
                 return Task.FromResult(Json(ProfileJson));
             }
             if (action == "get_main_info")
@@ -264,7 +301,16 @@ public sealed class StalkerCompatibilityTests
                 MainInfoRequests++;
                 return Task.FromResult(new HttpResponseMessage(MainInfoStatus) { Content = new StringContent(MainInfoJson, Encoding.UTF8, "application/json") });
             }
-            if (action == "get_genres") return Task.FromResult(Json("{\"js\":[{\"id\":\"*\",\"title\":\"All\"},{\"id\":\"100\",\"title\":\"FR| GENERAL\"}]}"));
+            if (action == "get_genres")
+            {
+                if (FirstGenresRejection is { } rejection && !_firstGenresRejected && snapshot.Authorization == "Bearer mag-token-1")
+                {
+                    _firstGenresRejected = true;
+                    return Task.FromResult(new HttpResponseMessage(rejection));
+                }
+                return Task.FromResult(Json("{\"js\":[{\"id\":\"*\",\"title\":\"All\"},{\"id\":\"100\",\"title\":\"FR| GENERAL\"}]}"));
+            }
+            if (action == "get_all_channels") return Task.FromResult(Json("{\"js\":{\"data\":[{\"id\":\"live-1\",\"name\":\"Fixture Live\",\"tv_genre_id\":\"100\",\"cmd\":\"ffmpeg https://stream.example.invalid/live\"}]}}"));
             if (action == "get_categories" && Parameter(request.RequestUri, "type") == "vod") return Task.FromResult(Json("{\"js\":[{\"id\":\"*\",\"title\":\"All\"},{\"id\":\"200\",\"title\":\"|FR| FILMS\"}]}"));
             if (action == "get_categories" && Parameter(request.RequestUri, "type") == "series") return Task.FromResult(Json("{\"js\":[{\"id\":\"*\",\"title\":\"All\"},{\"id\":\"300\",\"title\":\"|FR| SERIES\"}]}"));
             return Task.FromResult(Json("{\"js\":{}}"));
@@ -290,7 +336,8 @@ public sealed class StalkerCompatibilityTests
         }
     }
 
-    private sealed record RequestSnapshot(string? Action, string Host, string UserAgent, string? Accept, string? XUserAgent, string? XRequestedWith, string? Referer, string? Cookie, string? Authorization)
+    private sealed record RequestSnapshot(string? Action, string Host, string UserAgent, string? Accept, string? XUserAgent, string? XRequestedWith, string? Referer, string? Cookie, string? Authorization,
+        IReadOnlyDictionary<string, string> Parameters)
     {
         public bool IsMag => UserAgent.Contains("QtEmbedded", StringComparison.Ordinal);
 
@@ -303,7 +350,8 @@ public sealed class StalkerCompatibilityTests
             Header(request, "X-Requested-With"),
             request.Headers.Referrer?.AbsoluteUri,
             Header(request, "Cookie"),
-            request.Headers.Authorization is { } authorization ? $"{authorization.Scheme} {authorization.Parameter}" : null);
+            request.Headers.Authorization is { } authorization ? $"{authorization.Scheme} {authorization.Parameter}" : null,
+            QueryParameters(request.RequestUri));
     }
 
     private static string? Header(HttpRequestMessage request, string name, string separator = " ") => request.Headers.TryGetValues(name, out var values) ? string.Join(separator, values) : null;
@@ -317,6 +365,14 @@ public sealed class StalkerCompatibilityTests
             if (Uri.UnescapeDataString(parts[0]) == name) return parts.Length == 2 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
         }
         return null;
+    }
+
+    private static IReadOnlyDictionary<string, string> QueryParameters(Uri? uri)
+    {
+        if (uri is null) return new Dictionary<string, string>();
+        return uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .ToDictionary(parts => Uri.UnescapeDataString(parts[0]), parts => parts.Length == 2 ? Uri.UnescapeDataString(parts[1]) : string.Empty, StringComparer.Ordinal);
     }
 
     private static HttpResponseMessage Json(string value) => new(HttpStatusCode.OK) { Content = new StringContent(value, Encoding.UTF8, "application/json") };

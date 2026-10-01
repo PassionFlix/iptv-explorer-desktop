@@ -1,5 +1,7 @@
 using System.Net;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using IPTVExplorer.Core;
@@ -29,6 +31,8 @@ public sealed class StalkerProviderClient(
     private Task<LiveCatalogRefreshResult>? _manualLiveRefresh;
     private string? _token; // Session-only by design. Never expose or persist this value.
     private RequestProfile? _requestProfile;
+    private JsonElement? _sessionProfile;
+    private bool _magProfileBootstrapped;
     private AccountInfo? _accountInfo;
 
     public ProviderType Type => ProviderType.Stalker;
@@ -55,8 +59,7 @@ public sealed class StalkerProviderClient(
     {
         if (_accountInfo is not null) return _accountInfo;
 
-        using var profileDocument = await PortalAsync("stb", "get_profile", [], cancellationToken);
-        var profile = profileDocument.RootElement.Unwrap();
+        var profile = await GetAccountProfileAsync(cancellationToken);
         var rejected = profile.Text("auth") == "0" || profile.Text("blocked") == "1";
         var recognized = profile.ValueKind == JsonValueKind.Object &&
             new[] { "id", "user_id", "mac", "status", "blocked" }.Any(field => profile.TryGetProperty(field, out _));
@@ -553,14 +556,14 @@ public sealed class StalkerProviderClient(
 
     private async Task EnsureTokenAsync(CancellationToken cancellationToken)
     {
-        if (_token is not null) return;
+        if (HasUsableSession()) return;
         await _handshake.WaitAsync(cancellationToken);
         try
         {
-            if (_token is not null) return;
+            if (HasUsableSession()) return;
             if (_requestProfile is { } selected)
             {
-                _token = await HandshakeAsync(selected, cancellationToken);
+                await EstablishSessionAsync(selected, cancellationToken);
                 return;
             }
 
@@ -570,6 +573,8 @@ public sealed class StalkerProviderClient(
                 var token = await HandshakeAsync(RequestProfile.Legacy, cancellationToken);
                 _requestProfile = RequestProfile.Legacy;
                 _token = token;
+                _sessionProfile = null;
+                _magProfileBootstrapped = false;
                 return;
             }
             catch (Exception exception) when (IsFallbackCompatible(exception))
@@ -579,9 +584,8 @@ public sealed class StalkerProviderClient(
 
             try
             {
-                var token = await HandshakeAsync(RequestProfile.Mag254Compatible, cancellationToken);
                 _requestProfile = RequestProfile.Mag254Compatible;
-                _token = token;
+                await EstablishSessionAsync(RequestProfile.Mag254Compatible, cancellationToken);
             }
             catch (Exception magFailure) when (IsFallbackCompatible(magFailure))
             {
@@ -590,6 +594,70 @@ public sealed class StalkerProviderClient(
         }
         finally { _handshake.Release(); }
     }
+
+    private bool HasUsableSession() => _token is not null &&
+        (_requestProfile != RequestProfile.Mag254Compatible || (_magProfileBootstrapped && _sessionProfile is not null));
+
+    private async Task EstablishSessionAsync(RequestProfile profile, CancellationToken cancellationToken)
+    {
+        InvalidateSession();
+        try
+        {
+            _token = await HandshakeAsync(profile, cancellationToken);
+            if (profile == RequestProfile.Mag254Compatible) await EnsureMagProfileBootstrapAsync(cancellationToken);
+        }
+        catch
+        {
+            InvalidateSession();
+            throw;
+        }
+    }
+
+    private async Task EnsureMagProfileBootstrapAsync(CancellationToken cancellationToken)
+    {
+        if (_magProfileBootstrapped && _sessionProfile is not null) return;
+        if (_token is null || _requestProfile != RequestProfile.Mag254Compatible)
+            throw new InvalidOperationException("A MAG session token is required before profile bootstrap.");
+
+        using var document = await SendAsync("stb", "get_profile", BuildMagProfileParameters(), includeToken: true,
+            RequestProfile.Mag254Compatible, cancellationToken);
+        _sessionProfile = document.RootElement.Unwrap().Clone();
+        _magProfileBootstrapped = true;
+    }
+
+    private async Task<JsonElement> GetAccountProfileAsync(CancellationToken cancellationToken)
+    {
+        await EnsureTokenAsync(cancellationToken);
+        if (_requestProfile == RequestProfile.Mag254Compatible)
+            return _sessionProfile ?? throw new InvalidOperationException("The MAG session profile is unavailable.");
+
+        using var document = await PortalAsync("stb", "get_profile", [], cancellationToken);
+        return document.RootElement.Unwrap().Clone();
+    }
+
+    private IReadOnlyList<(string Key, string Value)> BuildMagProfileParameters()
+    {
+        var mac = NormalizeMac(secret.MacAddress);
+        var md5 = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(mac)));
+        var sn = md5[13..];
+        return
+        [
+            ("hd", "1"),
+            ("ver", "ImageDescription: 0.2.18-r11-pub-254; ImageDate: Wed Mar 18 18:09:40 EET 2015; PORTAL version: 4.9.14; API Version: JS API version: 331; STB API version: 141; Player Engine version: 0x572"),
+            ("num_banks", "1"),
+            ("stb_type", "MAG254"),
+            ("image_version", "218"),
+            ("auth_second_step", "0"),
+            ("hw_version", "2.6-IB-00"),
+            ("not_valid_token", "0"),
+            ("sn", sn),
+            ("device_id", Sha256(sn)),
+            ("device_id2", Sha256(mac)),
+            ("signature", Sha256(sn + mac))
+        ];
+    }
+
+    private static string Sha256(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private async Task<string> HandshakeAsync(RequestProfile profile, CancellationToken cancellationToken)
     {
@@ -612,8 +680,7 @@ public sealed class StalkerProviderClient(
         using var response = await SendWithRedirectsAsync(uri, mac, includeToken, profile, cancellationToken, retryTransient);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
-            _token = null;
-            _accountInfo = null;
+            InvalidateSession();
             if (includeToken) throw new StalkerSessionExpiredException();
             throw StalkerResponseException.For(action, response);
         }
@@ -621,6 +688,14 @@ public sealed class StalkerProviderClient(
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         try { return await JsonDocument.ParseAsync(stream, new JsonDocumentOptions { MaxDepth = 512 }, cancellationToken); }
         catch (JsonException exception) { throw StalkerResponseException.For(action, response, "JSON incompatible", exception); }
+    }
+
+    private void InvalidateSession()
+    {
+        _token = null;
+        _accountInfo = null;
+        _sessionProfile = null;
+        _magProfileBootstrapped = false;
     }
 
     private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, RequestProfile profile,
