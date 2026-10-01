@@ -29,9 +29,13 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 - Fiches de séries chargées depuis le fournisseur uniquement après une action explicite, puis réutilisées depuis le cache.
 - Appels automatiques au fournisseur fortement réduits ; aucune réparation réseau automatique des affiches ou arrière-plans.
 - Comportement de Lecture et Stop rendu plus prévisible dans le lecteur natif.
+- Compatibilité de mise à niveau depuis la base et l’index publics 1.0.0 davantage couverte et vérifiée.
 
 ### Fixed
 
+- Sécurisation du runtime libmpv lors des builds et packages de release grâce à la vérification des empreintes de l’archive et de la DLL.
+- Nettoyage correct des téléchargements à leur fin ou lors de la fermeture de l’application.
+- Protection étendue des informations sensibles et des signatures d’URL dans les journaux.
 - Correction de la préparation des futures versions et de l’affichage de version.
 - Sécurisation de la suppression des fournisseurs et de leurs données locales.
 - Amélioration de la disposition et du suivi des téléchargements d’épisodes.

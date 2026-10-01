@@ -25,7 +25,7 @@
     <Content Include="native\mpv\README.txt" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\mpv\README.txt')" />
   </ItemGroup>
   <Target Name="PrepareLibMpvRuntime" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$(DesignTimeBuild)' != 'true'">
-    <Exec Condition="!Exists('$(LibMpvLibraryPath)')" Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Get-LibMpvRuntime.ps1&quot;" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Get-LibMpvRuntime.ps1&quot;" />
     <Error Condition="!Exists('$(LibMpvLibraryPath)')" Text="Le runtime libmpv requis est absent après sa préparation : $(LibMpvLibraryPath)" />
     <ItemGroup>
       <Content Include="$(LibMpvRuntimeDirectory)\*.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

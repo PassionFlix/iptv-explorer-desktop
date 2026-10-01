@@ -54,6 +54,10 @@ jobs:
         shell: pwsh
         run: choco install 7zip innosetup --no-progress -y
 
+      - name: Test pinned libmpv tooling (local fixtures)
+        shell: pwsh
+        run: .\scripts\Test-LibMpvRuntime.ps1
+
       - name: Public release audit
         shell: pwsh
         run: |

@@ -14,5 +14,6 @@
     <Using Include="Xunit" />
     <!-- Exercise the actual bridge without loading WPF/WebView2 or the real application profile. -->
     <Compile Include="..\..\src\IPTVExplorer.Desktop\BridgeRouter.cs" Link="BridgeRouter.cs" />
+    <Compile Include="..\..\src\IPTVExplorer.Desktop\MediaDownloadManager.cs" Link="MediaDownloadManager.cs" />
   </ItemGroup>
 </Project>

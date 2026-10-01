@@ -38,9 +38,8 @@ function Get-Sha256([string]$Path) {
     }
 }
 
-if (-not (Test-Path -LiteralPath $mpvDll)) {
-    & (Join-Path $PSScriptRoot 'Get-LibMpvRuntime.ps1')
-}
+if ($DownloadLibMpv) { & (Join-Path $PSScriptRoot 'Get-LibMpvRuntime.ps1') -Force }
+else { & (Join-Path $PSScriptRoot 'Get-LibMpvRuntime.ps1') -VerifyOnly }
 if (-not (Test-Path -LiteralPath $mpvDll)) {
     throw "libmpv-2.dll est requis avant le packaging. Exécutez scripts\Get-LibMpvRuntime.ps1."
 }

@@ -57,6 +57,7 @@ public partial class App : Application
             builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();
             builder.Services.AddSingleton<BridgeRouter>();
+            builder.Services.AddSingleton<MediaDownloadManager>();
             builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
             builder.Services.AddHttpClient("providers", ProviderHttpRegistration.Configure)
@@ -89,6 +90,7 @@ public partial class App : Application
     {
         if (_host is not null)
         {
+            await _host.Services.GetRequiredService<MediaDownloadManager>().ShutdownAsync(TimeSpan.FromSeconds(5));
             await _host.Services.GetRequiredService<PlaybackCoordinator>().FlushAsync();
             await _host.StopAsync(TimeSpan.FromSeconds(5));
             if (_host is IAsyncDisposable asyncHost) await asyncHost.DisposeAsync();

@@ -1,13 +1,8 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.IO;
-using System.Net;
-using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
-using IPTVExplorer.Providers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 
@@ -16,10 +11,10 @@ namespace IPTVExplorer.Desktop;
 public sealed class MediaActionBridge(
     IProviderRepository providers,
     IProviderClientFactory clients,
+    MediaDownloadManager downloads,
     ILogger<MediaActionBridge> logger)
 {
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
-    private readonly ConcurrentDictionary<string, DownloadOperation> _downloads = new(StringComparer.Ordinal);
 
     public async Task<string?> TryHandleAsync(string message, CancellationToken cancellationToken = default)
     {
@@ -96,148 +91,20 @@ public sealed class MediaActionBridge(
 
         if (string.IsNullOrWhiteSpace(destination)) return new { cancelled = true };
 
-        var id = Guid.NewGuid().ToString("N");
-        var operation = new DownloadOperation(id, Path.GetFileName(destination), destination, destination + ".part-" + id);
-        if (!_downloads.TryAdd(id, operation)) throw new InvalidOperationException("Impossible de créer le téléchargement.");
-
-        _ = RunDownloadAsync(operation, media);
-        return new { started = true, downloadId = id, fileName = operation.FileName };
+        var operation = downloads.Start(Path.GetFileName(destination), destination, media);
+        return new { started = true, downloadId = operation.DownloadId, fileName = operation.FileName };
     }
 
     private object DownloadStatus(DownloadActionRequest input)
     {
-        var operation = RequiredDownload(input.DownloadId);
-        return Snapshot(operation);
+        return downloads.Get(input.DownloadId) ?? throw new InvalidOperationException("Téléchargement introuvable.");
     }
 
     private object CancelDownload(DownloadActionRequest input)
     {
-        var operation = RequiredDownload(input.DownloadId);
-        lock (operation.Gate)
-        {
-            if (operation.Status is "completed" or "failed" or "cancelled")
-                return new { cancelled = operation.Status == "cancelled" };
-        }
-
-        try
-        {
-            operation.Cancellation.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        return new { cancelled = true };
-    }
-
-    private async Task RunDownloadAsync(DownloadOperation operation, ResolvedMedia media)
-    {
-        try
-        {
-            using var handler = new SocketsHttpHandler
-            {
-                AutomaticDecompression = DecompressionMethods.None,
-                AllowAutoRedirect = true,
-                UseCookies = false,
-                ConnectTimeout = TimeSpan.FromSeconds(20)
-            };
-            using var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-            using var request = new HttpRequestMessage(HttpMethod.Get, media.Uri);
-            if (media.Headers is not null)
-            {
-                foreach (var (name, value) in media.Headers)
-                    request.Headers.TryAddWithoutValidation(name, value);
-            }
-
-            if (!request.Headers.Contains("User-Agent"))
-                request.Headers.TryAddWithoutValidation("User-Agent", ProviderHttpRegistration.MediaUserAgent);
-            if (!request.Headers.Contains("Accept"))
-                request.Headers.TryAddWithoutValidation("Accept", "*/*");
-
-            using var response = await http.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                operation.Cancellation.Token);
-            response.EnsureSuccessStatusCode();
-
-            lock (operation.Gate)
-            {
-                operation.TotalBytes = response.Content.Headers.ContentLength;
-                operation.Status = "running";
-            }
-
-            await using (var source = await response.Content.ReadAsStreamAsync(operation.Cancellation.Token))
-            await using (var target = new FileStream(
-                operation.TemporaryPath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                1024 * 128,
-                useAsync: true))
-            {
-                var buffer = new byte[1024 * 128];
-                while (true)
-                {
-                    var read = await source.ReadAsync(buffer, operation.Cancellation.Token);
-                    if (read == 0) break;
-                    await target.WriteAsync(buffer.AsMemory(0, read), operation.Cancellation.Token);
-                    lock (operation.Gate) operation.BytesReceived += read;
-                }
-                await target.FlushAsync(operation.Cancellation.Token);
-            }
-
-            File.Move(operation.TemporaryPath, operation.DestinationPath, true);
-            lock (operation.Gate)
-            {
-                operation.Status = "completed";
-                if (operation.TotalBytes is null) operation.TotalBytes = operation.BytesReceived;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            lock (operation.Gate) operation.Status = "cancelled";
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning("Media download failed: {SafeError}", LogRedactor.Redact(exception.Message));
-            lock (operation.Gate)
-            {
-                operation.Status = "failed";
-                operation.Error = "Le téléchargement a échoué.";
-            }
-        }
-        finally
-        {
-            if (File.Exists(operation.TemporaryPath))
-            {
-                try { File.Delete(operation.TemporaryPath); } catch { }
-            }
-        }
-    }
-
-    private static object Snapshot(DownloadOperation operation)
-    {
-        lock (operation.Gate)
-        {
-            var elapsed = Math.Max(0.001, operation.Timer.Elapsed.TotalSeconds);
-            var bytesPerSecond = operation.Status == "cancelled" ? 0L : (long)Math.Max(0, operation.BytesReceived / elapsed);
-            return new
-            {
-                downloadId = operation.Id,
-                fileName = operation.FileName,
-                status = operation.Status,
-                bytesReceived = operation.BytesReceived,
-                totalBytes = operation.TotalBytes,
-                bytesPerSecond,
-                error = operation.Error
-            };
-        }
-    }
-
-    private DownloadOperation RequiredDownload(string downloadId)
-    {
-        if (string.IsNullOrWhiteSpace(downloadId) || downloadId.Length > 64 || !_downloads.TryGetValue(downloadId, out var operation))
+        if (string.IsNullOrWhiteSpace(input.DownloadId) || input.DownloadId.Length > 64 || downloads.Get(input.DownloadId) is null)
             throw new InvalidOperationException("Téléchargement introuvable.");
-        return operation;
+        return new { cancelled = downloads.Cancel(input.DownloadId) };
     }
 
     private async Task<ResolvedMedia> ResolveAsync(MediaActionRequest input, CancellationToken cancellationToken)
@@ -323,18 +190,4 @@ public sealed class MediaActionBridge(
         string? SuggestedName = null);
     private sealed record DownloadActionRequest(string DownloadId);
 
-    private sealed class DownloadOperation(string id, string fileName, string destinationPath, string temporaryPath)
-    {
-        public object Gate { get; } = new();
-        public string Id { get; } = id;
-        public string FileName { get; } = fileName;
-        public string DestinationPath { get; } = destinationPath;
-        public string TemporaryPath { get; } = temporaryPath;
-        public CancellationTokenSource Cancellation { get; } = new();
-        public Stopwatch Timer { get; } = Stopwatch.StartNew();
-        public string Status { get; set; } = "starting";
-        public long BytesReceived { get; set; }
-        public long? TotalBytes { get; set; }
-        public string? Error { get; set; }
-    }
 }
