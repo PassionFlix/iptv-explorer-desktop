@@ -69,36 +69,46 @@
     try { await applyCatalogRefresh(provider.key, await rpc('catalog.session', { providerKey: provider.key })); }
     catch { if (state.activeProviderKey === provider.key) $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
   }
-  async function loadCatalogStatus() {
+  async function loadCatalogStatus(preserveState = false) {
     const provider = activeProvider();
-    $('#refresh-catalog').disabled = catalogRefreshBusy || !provider || provider.type !== 'xtream';
-    if (!provider || provider.type !== 'xtream') { $('#catalog-refreshed-at').textContent = 'Actualisation bulk réservée à Xtream.'; return; }
+    const stalker = provider?.type === 'stalker';
+    $('#refresh-catalog').disabled = catalogRefreshBusy || !provider;
+    $('#refresh-catalog').textContent = stalker ? 'Actualiser le Live' : 'Actualiser le catalogue';
+    $('#catalog-snapshot-kind').textContent = stalker ? 'LIVE STALKER' : 'CATALOGUE XTREAM';
+    if (!provider) { $('#catalog-refreshed-at').textContent = 'Aucun fournisseur actif.'; return; }
     try {
       const status = await rpc('catalog.status', { providerKey: provider.key });
       if (state.activeProviderKey !== provider.key) return;
-      $('#catalog-refreshed-at').textContent = `Dernière actualisation : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
+      $('#catalog-refreshed-at').textContent = `${stalker ? 'Dernière actualisation Live' : 'Dernière actualisation'} : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
+      if (!preserveState) $('#catalog-refresh-state').textContent = stalker
+          ? 'Navigation Live locale. Cache valide 6 heures ; aucune analyse catégorie par catégorie.'
+          : 'Navigation locale. Actualisation automatique au plus une fois par session, avec un délai de 30 minutes.';
     } catch { /* Local status only; no network fallback. */ }
   }
   async function applyCatalogRefresh(providerKey, result) {
     if (state.activeProviderKey !== providerKey) return;
     const labels = { updated: 'Catalogue actualisé. Indexation locale en cours.', updatedIndexPending: 'Catalogue actualisé. Reconstruction locale disponible.', recent: 'Cache récent : aucun appel catalogue.', retained: 'Données locales conservées. Aucun nouvel essai automatique.' };
-    $('#catalog-refresh-state').textContent = labels[result.state] || 'Données locales disponibles.';
-    await loadCatalogStatus();
+    $('#catalog-refresh-state').textContent = activeProvider()?.type === 'stalker' && result.state === 'updated'
+      ? 'Live actualisé. Le cache local est prêt.'
+      : labels[result.state] || 'Données locales disponibles.';
+    await loadCatalogStatus(true);
     if (!result.updated || state.activeProviderKey !== providerKey) return;
     state.catalogs.clear();
     if (state.page === 'home') await renderHome();
     else if (['live', 'vod', 'series'].includes(state.page)) await loadCatalogShell(state.page);
-    await pollIndex();
+    if (activeProvider()?.type === 'xtream') await pollIndex();
   }
   async function refreshCatalogManual() {
     const provider = activeProvider();
-    if (!provider || provider.type !== 'xtream' || catalogRefreshBusy) return;
+    if (!provider || catalogRefreshBusy) return;
     catalogRefreshBusy = true; $('#refresh-catalog').disabled = true;
-    catalogSessions.add(provider.key);
-    $('#catalog-refresh-state').textContent = 'Actualisation volontaire : Live, Films, puis Séries…';
+    if (provider.type === 'xtream') catalogSessions.add(provider.key);
+    $('#catalog-refresh-state').textContent = provider.type === 'stalker'
+      ? 'Actualisation volontaire du Live…'
+      : 'Actualisation volontaire : Live, Films, puis Séries…';
     try { await applyCatalogRefresh(provider.key, await rpc('catalog.refresh', { providerKey: provider.key })); }
     catch { $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
-    finally { catalogRefreshBusy = false; await loadCatalogStatus(); }
+    finally { catalogRefreshBusy = false; await loadCatalogStatus(true); }
   }
   $('#refresh-catalog').addEventListener('click', refreshCatalogManual);
   function renderProviderSelector() {
@@ -279,7 +289,7 @@
   function renderCatalogItems(catalog, items) {
     const grid = $(`#${catalog} .catalog-grid`), providerKey = state.activeProviderKey; grid.replaceChildren();
     items.forEach(item => {
-      const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id, extension: item.extension });
+      const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id, extension: item.extension, categoryId: item.categoryId });
       if (catalog === 'live') {
         const card = node('article', 'media-card live-card'); const visual = imageOrPlaceholder(item.imageUrl, item.title, 'channel-logo');
         const title = node('strong', '', item.title); const play = button('Lire', 'play-small', event => { event.stopPropagation(); openPlayer(reference, item.title); });

@@ -259,10 +259,16 @@ public sealed class BridgeRouter(
     }
     private async Task<object> CatalogRefresh(string key, bool manual, CancellationToken token)
     {
-        _ = await RequiredProvider(key, token);
+        var provider = await RequiredProvider(key, token);
         if (!manual && (await settings.GetAsync(token)).ActiveProviderKey != key)
             throw new InvalidOperationException("The requested provider is not active.");
-        return manual ? await catalogRefresh.RefreshManualAsync(key, token) : await catalogRefresh.EnsureSessionAsync(key, token);
+        if (provider.Type == ProviderType.Xtream)
+            return manual ? await catalogRefresh.RefreshManualAsync(key, token) : await catalogRefresh.EnsureSessionAsync(key, token);
+        if (!manual) return new LiveCatalogRefreshResult(false, "notApplicable", await snapshots.RefreshedAtAsync(key, token));
+        if (!provider.Enabled) throw new InvalidOperationException("This provider is disabled.");
+        var client = await clients.CreateAsync(provider, token);
+        if (client is not IStalkerLiveCatalogClient stalker) throw new InvalidOperationException("Stalker Live refresh is unavailable.");
+        return await stalker.RefreshLiveCatalogAsync(token);
     }
 
     private async Task<object> HomeContent(string providerKey, CancellationToken cancellationToken)
@@ -331,7 +337,7 @@ public sealed class BridgeRouter(
     private async Task<ProviderRecord> RequiredProvider(string key, CancellationToken cancellationToken) { if (!ProviderKey.IsValid(key)) throw new ArgumentException("Invalid provider key."); return await providers.GetAsync(key, cancellationToken) ?? throw new KeyNotFoundException("Provider was not found."); }
     private static object SafeProvider(ProviderRecord provider) => new { key = provider.Key, type = provider.Type.ToString().ToLowerInvariant(), name = provider.Name, serverUrl = provider.ServerUri.ToString().TrimEnd('/'), provider.Enabled, provider.Status };
     private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, category.Selected, category.Present, category.NeedsReview };
-    private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating };
+    private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating, item.CategoryId };
     private static bool IndexDirty(IEnumerable<CategorySummary> summaries) => summaries.Any(summary => summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.IndexDirty);
     private static string? SafeImage(string? value) => MediaArtwork.SafeImageUrl(value);
     private static CatalogType ParseCatalog(string value) => Enum.TryParse<CatalogType>(value, true, out var catalog) ? catalog : throw new ArgumentException("Invalid catalog type.");

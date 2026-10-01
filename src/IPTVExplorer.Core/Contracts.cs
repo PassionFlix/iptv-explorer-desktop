@@ -53,6 +53,20 @@ public interface IProviderLocalData
     Task DeleteSearchIndexAsync(string providerKey, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Persistent allowlisted Live metadata for Stalker. Commands and session credentials never cross this boundary.</summary>
+public interface IStalkerLiveCatalogStore
+{
+    Task<DateTimeOffset?> RefreshedAtAsync(string providerKey, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<CatalogItem>> ReadAsync(string providerKey, string? categoryId = null, CancellationToken cancellationToken = default);
+    Task ReplaceAsync(string providerKey, IReadOnlyList<CatalogItem> items, ProviderSecret secret, DateTimeOffset refreshedAt,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IStalkerLiveCatalogClient
+{
+    Task<LiveCatalogRefreshResult> RefreshLiveCatalogAsync(CancellationToken cancellationToken = default);
+}
+
 public interface ISearchService
 {
     Task<CatalogPage<SearchHit>> SearchAsync(string? providerKey, CatalogType catalog, string query, int page, int pageSize, CancellationToken cancellationToken = default);

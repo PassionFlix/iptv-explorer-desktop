@@ -109,7 +109,8 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         try
         {
             var playbackId = reference.EpisodeId ?? reference.MediaId;
-            var request = new MediaRequest(reference.MediaType, playbackId, reference.MediaType == CatalogType.Series ? reference.MediaId : null, reference.Extension);
+            var request = new MediaRequest(reference.MediaType, playbackId, reference.MediaType == CatalogType.Series ? reference.MediaId : null,
+                reference.Extension, reference.CategoryId);
             var resolved = await client.ResolveMediaAsync(request, cancellationToken);
             lock (_resumeLock) _pendingResumePosition = resumePosition is { } position && position > TimeSpan.Zero ? position : null;
             await _player.LoadAsync(resolved, renderHostHandle, cancellationToken);
@@ -266,6 +267,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         if (!ProviderKey.IsValid(reference.ProviderKey)) throw new ArgumentException("Invalid provider key.");
         ValidateOpaqueId(reference.MediaId, nameof(reference.MediaId));
         if (reference.EpisodeId is not null) ValidateOpaqueId(reference.EpisodeId, nameof(reference.EpisodeId));
+        if (reference.CategoryId is not null) ValidateOpaqueId(reference.CategoryId, nameof(reference.CategoryId));
         if (reference.Extension is not null && (reference.Extension.Length is < 1 or > 20 || reference.Extension.Any(character => !char.IsAsciiLetterOrDigit(character))))
             throw new ArgumentException("Invalid media extension.");
     }

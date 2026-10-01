@@ -6,17 +6,27 @@ using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Providers;
 
-public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecret secret, HttpClient http) : IProviderClient
+public sealed class StalkerProviderClient(
+    ProviderRecord provider,
+    ProviderSecret secret,
+    HttpClient http,
+    IStalkerLiveCatalogStore? liveCatalogStore = null,
+    TimeProvider? clock = null) : IProviderClient, IStalkerLiveCatalogClient
 {
-    private static readonly TimeSpan LiveCatalogCacheDuration = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan LiveCatalogCacheDuration = TimeSpan.FromHours(6);
     private readonly SemaphoreSlim _handshake = new(1, 1);
     private readonly SemaphoreSlim _liveCatalogLock = new(1, 1);
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    private readonly object _manualLiveRefreshGate = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(CatalogType Catalog, string Id), string> _commands = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Task<IReadOnlyList<LiveChannel>>>> _liveCategoryFallbacks = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, VodDetails> _vodDetails = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _categoryStructures = new(StringComparer.Ordinal);
     private IReadOnlyList<LiveChannel>? _liveChannels;
     private DateTimeOffset _liveChannelsExpiresAt;
+    private bool _automaticLiveRefreshAttempted;
+    private Exception? _automaticLiveRefreshFailure;
+    private Task<LiveCatalogRefreshResult>? _manualLiveRefresh;
     private string? _token; // Session-only by design. Never expose or persist this value.
     private RequestProfile? _requestProfile;
     private AccountInfo? _accountInfo;
@@ -79,9 +89,30 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         var matching = channels.Where(channel => string.Equals(channel.GenreId, categoryId, StringComparison.Ordinal)).Select(channel => channel.Item).ToArray();
         if (matching.Length > 0) return matching;
 
+        return (await GetTargetedLiveCategoryAsync(categoryId, cancellationToken)).Select(channel => channel.Item).ToArray();
+    }
+
+    public async Task<IReadOnlyList<CatalogItem>> GetAllLiveAsync(CancellationToken cancellationToken = default) =>
+        (await GetAllLiveChannelsAsync(cancellationToken)).Select(channel => channel.Item).ToArray();
+
+    public Task<LiveCatalogRefreshResult> RefreshLiveCatalogAsync(CancellationToken cancellationToken = default)
+    {
+        Task<LiveCatalogRefreshResult> refresh;
+        lock (_manualLiveRefreshGate)
+        {
+            if (_manualLiveRefresh is null || _manualLiveRefresh.IsCompleted)
+                _manualLiveRefresh = RefreshLiveCatalogCoreAsync(cancellationToken);
+            refresh = _manualLiveRefresh;
+        }
+        return refresh.WaitAsync(cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<LiveChannel>> GetTargetedLiveCategoryAsync(string categoryId, CancellationToken cancellationToken)
+    {
         var fallback = _liveCategoryFallbacks.GetOrAdd(categoryId, id => new Lazy<Task<IReadOnlyList<LiveChannel>>>(
             () => GetOrderedLiveCategoryAsync(id, CancellationToken.None), LazyThreadSafetyMode.ExecutionAndPublication));
-        try { return (await fallback.Value.WaitAsync(cancellationToken)).Select(channel => channel.Item).ToArray(); }
+        try { return await fallback.Value.WaitAsync(cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch
         {
             if (_liveCategoryFallbacks.TryGetValue(categoryId, out var current) && ReferenceEquals(current, fallback))
@@ -191,34 +222,108 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 
     private async Task<IReadOnlyList<LiveChannel>> GetAllLiveChannelsAsync(CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _clock.GetUtcNow();
         if (_liveChannels is not null && now < _liveChannelsExpiresAt) return _liveChannels;
+        if (_automaticLiveRefreshFailure is not null) throw CachedLiveRefreshFailure(_automaticLiveRefreshFailure);
 
         await _liveCatalogLock.WaitAsync(cancellationToken);
         try
         {
-            now = DateTimeOffset.UtcNow;
+            now = _clock.GetUtcNow();
             if (_liveChannels is not null && now < _liveChannelsExpiresAt) return _liveChannels;
-            using var document = await PortalAsync("itv", "get_all_channels", [], cancellationToken);
-            var channels = new List<LiveChannel>();
-            foreach (var raw in ReadRawItems(document.RootElement))
+            if (_automaticLiveRefreshFailure is not null) throw CachedLiveRefreshFailure(_automaticLiveRefreshFailure);
+
+            DateTimeOffset? persistedAt = null;
+            IReadOnlyList<LiveChannel>? persisted = null;
+            if (liveCatalogStore is not null)
             {
-                var genreId = raw.Text("tv_genre_id");
-                if (string.IsNullOrWhiteSpace(genreId)) continue;
-                var item = JsonSupport.Item(raw, CatalogType.Live);
-                if (item.Id.Length == 0) continue;
-                CacheCommand(raw, CatalogType.Live, item.Id);
-                channels.Add(new LiveChannel(genreId, item));
+                persistedAt = await liveCatalogStore.RefreshedAtAsync(provider.Key, cancellationToken);
+                if (persistedAt is not null)
+                {
+                    persisted = ToLiveChannels(await liveCatalogStore.ReadAsync(provider.Key, null, cancellationToken));
+                    if (now < persistedAt.Value.Add(LiveCatalogCacheDuration))
+                        return SetLiveChannels(persisted, persistedAt.Value.Add(LiveCatalogCacheDuration));
+                    if (_automaticLiveRefreshAttempted)
+                        return SetLiveChannels(persisted, DateTimeOffset.MaxValue);
+                }
             }
-            _liveChannels = channels;
-            _liveChannelsExpiresAt = now.Add(LiveCatalogCacheDuration);
-            return channels;
+
+            _automaticLiveRefreshAttempted = true;
+            try { return await FetchAndPublishLiveChannelsAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch when (persistedAt is not null)
+            {
+                // One failed automatic refresh must not turn normal navigation into a retry loop.
+                return SetLiveChannels(persisted!, DateTimeOffset.MaxValue);
+            }
+            catch (Exception exception)
+            {
+                _automaticLiveRefreshFailure = exception;
+                throw;
+            }
         }
         finally
         {
             _liveCatalogLock.Release();
         }
     }
+
+    private async Task<LiveCatalogRefreshResult> RefreshLiveCatalogCoreAsync(CancellationToken cancellationToken)
+    {
+        var previous = liveCatalogStore is null ? null : await liveCatalogStore.RefreshedAtAsync(provider.Key, cancellationToken);
+        await _liveCatalogLock.WaitAsync(cancellationToken);
+        try
+        {
+            try
+            {
+                await FetchAndPublishLiveChannelsAsync(cancellationToken);
+                _automaticLiveRefreshAttempted = true;
+                _automaticLiveRefreshFailure = null;
+                _liveCategoryFallbacks.Clear();
+                return new(true, "updated", liveCatalogStore is null
+                    ? _clock.GetUtcNow()
+                    : await liveCatalogStore.RefreshedAtAsync(provider.Key, cancellationToken));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch { return new(false, "retained", previous); }
+        }
+        finally { _liveCatalogLock.Release(); }
+    }
+
+    private async Task<IReadOnlyList<LiveChannel>> FetchAndPublishLiveChannelsAsync(CancellationToken cancellationToken)
+    {
+        using var document = await PortalAsync("itv", "get_all_channels", [], cancellationToken, retryTransient: false);
+        var channels = new List<LiveChannel>();
+        foreach (var raw in ReadRawItems(document.RootElement))
+        {
+            var genreId = raw.Text("tv_genre_id");
+            if (string.IsNullOrWhiteSpace(genreId)) continue;
+            var item = JsonSupport.Item(raw, CatalogType.Live) with { CategoryId = genreId };
+            if (item.Id.Length == 0) continue;
+            CacheCommand(raw, CatalogType.Live, item.Id);
+            channels.Add(new LiveChannel(genreId, item));
+        }
+        var refreshedAt = _clock.GetUtcNow();
+        if (liveCatalogStore is not null)
+            await liveCatalogStore.ReplaceAsync(provider.Key, channels.Select(channel => channel.Item).ToArray(), secret, refreshedAt, cancellationToken);
+        _automaticLiveRefreshFailure = null;
+        return SetLiveChannels(channels, refreshedAt.Add(LiveCatalogCacheDuration));
+    }
+
+    private IReadOnlyList<LiveChannel> SetLiveChannels(IReadOnlyList<LiveChannel> channels, DateTimeOffset expiresAt)
+    {
+        _liveChannels = channels;
+        _liveChannelsExpiresAt = expiresAt;
+        return channels;
+    }
+
+    private static IReadOnlyList<LiveChannel> ToLiveChannels(IEnumerable<CatalogItem> items) => items
+        .Where(item => !string.IsNullOrWhiteSpace(item.CategoryId))
+        .Select(item => new LiveChannel(item.CategoryId!, item))
+        .ToArray();
+
+    private static InvalidOperationException CachedLiveRefreshFailure(Exception inner) =>
+        new("The Stalker Live catalog could not be loaded. Use the explicit refresh action to try again.", inner);
 
     private async Task<IReadOnlyList<LiveChannel>> GetOrderedLiveCategoryAsync(string categoryId, CancellationToken cancellationToken)
     {
@@ -412,6 +517,12 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     private async Task<string> ResolveCommandAsync(MediaRequest request, CancellationToken cancellationToken)
     {
         if (_commands.TryGetValue((request.Catalog, request.MediaId), out var cached)) return cached;
+        if (request.Catalog == CatalogType.Live && !string.IsNullOrWhiteSpace(request.CategoryId))
+        {
+            _ = await GetTargetedLiveCategoryAsync(request.CategoryId, cancellationToken);
+            if (_commands.TryGetValue((request.Catalog, request.MediaId), out cached)) return cached;
+            throw ContentNotFound();
+        }
         if (request.Catalog is CatalogType.Vod or CatalogType.Series)
         {
             if (request.Catalog == CatalogType.Series)
@@ -428,14 +539,15 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         throw new InvalidDataException("The media command is unavailable; reopen its catalog and try again.");
     }
 
-    private async Task<JsonDocument> PortalAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters, CancellationToken cancellationToken)
+    private async Task<JsonDocument> PortalAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters,
+        CancellationToken cancellationToken, bool retryTransient = true)
     {
         await EnsureTokenAsync(cancellationToken);
-        try { return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken); }
+        try { return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken, retryTransient); }
         catch (StalkerSessionExpiredException)
         {
             await EnsureTokenAsync(cancellationToken);
-            return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken);
+            return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken, retryTransient);
         }
     }
 
@@ -489,14 +601,15 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 
     private static bool IsFallbackCompatible(Exception exception) => exception is StalkerResponseException or InvalidDataException;
 
-    private async Task<JsonDocument> SendAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters, bool includeToken, RequestProfile profile, CancellationToken cancellationToken)
+    private async Task<JsonDocument> SendAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters,
+        bool includeToken, RequestProfile profile, CancellationToken cancellationToken, bool retryTransient = true)
     {
         var mac = NormalizeMac(secret.MacAddress);
         var values = new List<(string, string)> { ("type", type), ("action", action), ("JsHttpRequest", "1-xml") };
         values.AddRange(parameters);
         var endpoint = new Uri(provider.ServerUri.GetLeftPart(UriPartial.Authority) + "/" + provider.PortalPath.TrimStart('/'));
         var uri = XtreamProviderClient.BuildUri(endpoint, values);
-        using var response = await SendWithRedirectsAsync(uri, mac, includeToken, profile, cancellationToken);
+        using var response = await SendWithRedirectsAsync(uri, mac, includeToken, profile, cancellationToken, retryTransient);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             _token = null;
@@ -510,13 +623,23 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         catch (JsonException exception) { throw StalkerResponseException.For(action, response, "JSON incompatible", exception); }
     }
 
-    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, RequestProfile profile, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, RequestProfile profile,
+        CancellationToken cancellationToken, bool retryTransient)
     {
         const int maxRedirects = 3;
         var uri = initialUri;
         for (var redirect = 0; ; redirect++)
         {
-            var response = await HttpRetry.SendAsync(http, () => CreateRequest(uri, mac, includeToken, profile), cancellationToken);
+            HttpResponseMessage response;
+            if (retryTransient)
+            {
+                response = await HttpRetry.SendAsync(http, () => CreateRequest(uri, mac, includeToken, profile), cancellationToken);
+            }
+            else
+            {
+                using var request = CreateRequest(uri, mac, includeToken, profile);
+                response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            }
             if (!IsRedirect(response.StatusCode) || response.Headers.Location is null) return response;
             if (redirect >= maxRedirects)
             {
