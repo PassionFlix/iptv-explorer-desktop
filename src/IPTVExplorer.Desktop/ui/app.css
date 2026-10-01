@@ -782,3 +782,4 @@ main {
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
 }
+.category-select-label{display:block;margin-bottom:10px;color:var(--muted)}.category-select-label select{margin-top:6px}

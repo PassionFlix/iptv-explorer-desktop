@@ -227,15 +227,22 @@
   async function loadCatalogShell(catalog) {
     const section = $(`#${catalog}`), list = section.querySelector('.category-list'); list.replaceChildren();
     section.querySelector('.catalog-grid').replaceChildren(); section.querySelector('.empty-catalog').classList.remove('hidden');
+    const categorySelect = section.querySelector('.category-select'); if (categorySelect) categorySelect.replaceChildren(Object.assign(node('option', '', 'Sélectionner une catégorie'), { value: '' }));
     if (!state.activeProviderKey) { section.querySelector('.empty-catalog').textContent = 'Aucun fournisseur actif.'; return; }
     try {
       const data = await rpc('categories.list', { providerKey: state.activeProviderKey, catalogType: catalog }, 'view');
       const selected = data.categories.filter(category => category.selected && category.present);
       state.catalogs.set(catalog, { categories: selected, categoryId: null, page: 1, totalPages: 1 });
+      renderCatalogSelector(catalog);
       renderCatalogCategories(catalog, '');
       if (selected.length) selectCatalogCategory(catalog, selected[0].id);
       else section.querySelector('.empty-catalog').textContent = 'Aucune catégorie sélectionnée.';
     } catch (error) { if (!isAbort(error)) toast(error.message, true); }
+  }
+  function renderCatalogSelector(catalog) {
+    const select = $(`#${catalog} .category-select`), model = state.catalogs.get(catalog); if (!select || !model) return;
+    const placeholder = node('option', '', 'Sélectionner une catégorie'); placeholder.value = ''; select.replaceChildren(placeholder);
+    model.categories.forEach(category => { const option = node('option', '', decodeHtmlEntities(category.name)); option.value = category.id; option.selected = category.id === model.categoryId; select.append(option); });
   }
   function renderCatalogCategories(catalog, filter) {
     const model = state.catalogs.get(catalog), container = $(`#${catalog} .category-list`); container.replaceChildren();
@@ -245,8 +252,9 @@
     });
   }
   $$('.catalog-page .category-filter').forEach(input => input.addEventListener('input', () => renderCatalogCategories(input.closest('.catalog-page').dataset.catalog, input.value)));
+  $$('.catalog-page .category-select').forEach(select => select.addEventListener('change', () => { if (select.value) selectCatalogCategory(select.closest('.catalog-page').dataset.catalog, select.value); }));
   async function selectCatalogCategory(catalog, categoryId, page = 1) {
-    const model = state.catalogs.get(catalog); if (!model) return; model.categoryId = categoryId; model.page = page; renderCatalogCategories(catalog, $(`#${catalog} .category-filter`).value);
+    const model = state.catalogs.get(catalog); if (!model) return; model.categoryId = categoryId; model.page = page; renderCatalogSelector(catalog); renderCatalogCategories(catalog, $(`#${catalog} .category-filter`).value);
     const section = $(`#${catalog}`), grid = section.querySelector('.catalog-grid'), empty = section.querySelector('.empty-catalog'), loading = section.querySelector('.loading-state');
     grid.replaceChildren(); empty.classList.add('hidden'); loading.classList.remove('hidden');
     try {
