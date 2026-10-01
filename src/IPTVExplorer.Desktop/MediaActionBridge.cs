@@ -70,7 +70,7 @@ public sealed class MediaActionBridge(
     {
         Validate(input);
         var media = await ResolveAsync(input, cancellationToken);
-        var extension = NormalizeExtension(input.Extension) ?? ExtensionFromUri(media.Uri) ?? "mp4";
+        var extension = MediaDownloadNaming.ResolveExtension(input.Extension, media.Uri);
         var baseName = SanitizeFileName(input.SuggestedName);
         var fileName = baseName.EndsWith($".{extension}", StringComparison.OrdinalIgnoreCase)
             ? baseName
@@ -124,7 +124,7 @@ public sealed class MediaActionBridge(
 
         var client = await clients.CreateAsync(provider, cancellationToken);
         return await client.ResolveMediaAsync(
-            new MediaRequest(catalog, playbackId, seriesId, NormalizeExtension(input.Extension)),
+            new MediaRequest(catalog, playbackId, seriesId, MediaDownloadNaming.NormalizeExtension(input.Extension)),
             cancellationToken);
     }
 
@@ -159,19 +159,6 @@ public sealed class MediaActionBridge(
         var result = new string(chars).Trim().TrimEnd('.');
         if (result.Length > 140) result = result[..140].TrimEnd();
         return string.IsNullOrWhiteSpace(result) ? "video" : result;
-    }
-
-    private static string? NormalizeExtension(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var extension = value.Trim().TrimStart('.').ToLowerInvariant();
-        return extension.Length is > 0 and <= 12 && extension.All(char.IsLetterOrDigit) ? extension : null;
-    }
-
-    private static string? ExtensionFromUri(Uri uri)
-    {
-        var extension = Path.GetExtension(uri.AbsolutePath);
-        return NormalizeExtension(extension);
     }
 
     private static JsonSerializerOptions CreateJsonOptions()

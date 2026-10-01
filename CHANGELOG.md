@@ -14,6 +14,7 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 - Amélioration de la compatibilité avec certains portails Stalker/MAG nécessitant un profil de requête MAG complet.
 - Correction de la récupération des informations de compte et de la date d'expiration sur certains fournisseurs Stalker/MAG.
+- Correction de l’extension proposée lors du téléchargement de médias Stalker dont l’URL de lecture passe par un script PHP.
 
 ### Security
 
