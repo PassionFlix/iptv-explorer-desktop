@@ -35,6 +35,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     private TimeSpan? _duration;
     private bool _userPaused;
     private bool _playbackActive;
+    private bool _mediaSelected;
     private bool _pausedForCache;
     private DateTime _trackChangeResumeUntilUtc = DateTime.MinValue;
     private int _disposed;
@@ -73,9 +74,18 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             cancellationToken.ThrowIfCancellationRequested();
 
             var (api, handle) = RequiredEngine();
+            bool replacing;
+            lock (_sync)
+            {
+                replacing = _mediaSelected;
+                _mediaSelected = false;
+            }
+            if (replacing && api.Command(handle, "stop") < 0)
+                throw new InvalidOperationException("Impossible d’arrêter le média précédent.");
             var headers = FormatHeaders(media.Headers);
             if (api.LoadFile(handle, media.Uri.AbsoluteUri, headers) < 0)
                 throw new InvalidOperationException("Impossible de charger le média dans libmpv.");
+            lock (_sync) _mediaSelected = true;
         }
         catch (LibMpvUnavailableException exception)
         {
@@ -385,6 +395,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         lock (_sync)
         {
             _playbackActive = false;
+            _mediaSelected = false;
             _pausedForCache = false;
             _trackChangeResumeUntilUtc = DateTime.MinValue;
         }

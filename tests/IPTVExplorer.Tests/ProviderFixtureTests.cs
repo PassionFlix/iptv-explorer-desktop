@@ -37,6 +37,10 @@ public sealed class ProviderFixtureTests
         Assert.Equal("episode-501", episode.Id);
         var resolved = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Series, episode.Id, series.Id, "mkv"));
         Assert.Contains("/series/user-demo/password-demo/episode-501.mkv", resolved.Uri.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal(ProviderHttpRegistration.MediaUserAgent, resolved.Headers?["User-Agent"]);
+        Assert.Equal("*/*", resolved.Headers?["Accept"]);
+        Assert.DoesNotContain(resolved.Headers!, pair => pair.Value.Contains(XtreamSecret.Password!, StringComparison.Ordinal));
+        Assert.DoesNotContain(resolved.Headers!, pair => pair.Key.Contains("token", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

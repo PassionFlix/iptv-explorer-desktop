@@ -286,6 +286,19 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
+    public async Task LoadingAnotherMediaStopsThePreviousSelectionBeforeReplacement()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/first")), (nint)655);
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/second")), (nint)655);
+
+        Assert.Equal(2, api.Loads.Count);
+        Assert.Equal(["stop"], api.Commands.Select(command => string.Join(' ', command)));
+    }
+
+    [Fact]
     public async Task TrackChangeResumesAfterCachePauseButRespectsExplicitUserPause()
     {
         var api = new RecordingMpvApi();
@@ -433,13 +446,14 @@ public sealed class PlayerPhase3Tests
         public ConcurrentQueue<(string Name, string Value)> Properties { get; } = [];
         public ConcurrentQueue<string> ObservedProperties { get; } = [];
         public ConcurrentQueue<LoadFileCall> Loads { get; } = [];
+        public ConcurrentQueue<string[]> Commands { get; } = [];
         public int CreateCalls { get; private set; }
         public bool Terminated { get; private set; }
         public bool Disposed { get; private set; }
         public nint Create() { CreateCalls++; return (nint)55; }
         public int SetOptionString(nint handle, string name, string value) { Options.Enqueue((name, value)); return 0; }
         public int Initialize(nint handle) => 0;
-        public int Command(nint handle, params string[] arguments) => 0;
+        public int Command(nint handle, params string[] arguments) { Commands.Enqueue(arguments); return 0; }
         public int LoadFile(nint handle, string uri, string? httpHeaderFields) { Loads.Enqueue(new(uri, httpHeaderFields)); return 0; }
         public int SetPropertyString(nint handle, string name, string value) { Properties.Enqueue((name, value)); return 0; }
         public int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format) { ObservedProperties.Enqueue(name); return 0; }

@@ -102,7 +102,12 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
         var extension = string.IsNullOrWhiteSpace(request.Extension) ? fallbackExtension : request.Extension.Trim().TrimStart('.');
         // MediaId is deliberately the episode id for series playback, never the series id.
         var relative = $"{folder}/{Uri.EscapeDataString(secret.Username!)}/{Uri.EscapeDataString(secret.Password!)}/{Uri.EscapeDataString(request.MediaId)}.{Uri.EscapeDataString(extension)}";
-        return Task.FromResult(new ResolvedMedia(new Uri(EnsureTrailingSlash(provider.ServerUri), relative)));
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["User-Agent"] = ProviderHttpRegistration.MediaUserAgent,
+            ["Accept"] = "*/*"
+        };
+        return Task.FromResult(new ResolvedMedia(new Uri(EnsureTrailingSlash(provider.ServerUri), relative), headers));
     }
 
     private async Task<IReadOnlyList<ProviderCategory>> Categories(string action, CancellationToken cancellationToken)
