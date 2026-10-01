@@ -354,8 +354,8 @@ public sealed class ProviderFixtureTests
 
     [Theory]
     [InlineData("/portal.php", 1)]
-    [InlineData("/server/load.php", 2)]
-    [InlineData("/stalker_portal/server/load.php", 3)]
+    [InlineData("/server/load.php", 3)]
+    [InlineData("/stalker_portal/server/load.php", 5)]
     public async Task AutomaticOnboardingFallsBackAcrossStandardStalkerEndpoints(string acceptedPath, int expectedHandshakeAttempts)
     {
         await using var database = await TestDatabase.CreateAsync();
@@ -408,9 +408,11 @@ public sealed class ProviderFixtureTests
 
         Assert.Null(tested.DetectedType);
         Assert.StartsWith("Impossible d’établir une session Stalker/MAG", tested.Message, StringComparison.Ordinal);
-        Assert.Contains("/portal.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
-        Assert.Contains("/server/load.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
-        Assert.Contains("/stalker_portal/server/load.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/portal.php → handshake rejected both safe request profiles", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/server/load.php → handshake rejected both safe request profiles", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/stalker_portal/server/load.php → handshake rejected both safe request profiles", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("Legacy: handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("MAG254-compatible: handshake HTTP 404", tested.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(StalkerSecret.MacAddress!, tested.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("fixture-token", tested.Message, StringComparison.Ordinal);
     }

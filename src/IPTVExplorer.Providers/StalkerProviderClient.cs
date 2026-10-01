@@ -1,5 +1,7 @@
 using System.Net;
+using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using IPTVExplorer.Core;
 
 namespace IPTVExplorer.Providers;
@@ -15,6 +17,8 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     private IReadOnlyList<LiveChannel>? _liveChannels;
     private DateTimeOffset _liveChannelsExpiresAt;
     private string? _token; // Session-only by design. Never expose or persist this value.
+    private RequestProfile? _requestProfile;
+    private AccountInfo? _accountInfo;
 
     public ProviderType Type => ProviderType.Stalker;
     internal string? CategoryDiagnostic
@@ -38,12 +42,30 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
 
     public async Task<AccountInfo> GetAccountInfoAsync(CancellationToken cancellationToken = default)
     {
-        using var document = await PortalAsync("stb", "get_profile", [], cancellationToken);
-        var root = document.RootElement.Unwrap();
-        var hasProfileId = root.ValueKind == JsonValueKind.Object && !string.IsNullOrWhiteSpace(root.Text("id", "user_id"));
-        var rejected = root.Text("auth") == "0" || root.Text("blocked") == "1";
-        var authenticated = hasProfileId && !rejected;
-        return new AccountInfo(authenticated, root.Text("status"), null);
+        if (_accountInfo is not null) return _accountInfo;
+
+        using var profileDocument = await PortalAsync("stb", "get_profile", [], cancellationToken);
+        var profile = profileDocument.RootElement.Unwrap();
+        var rejected = profile.Text("auth") == "0" || profile.Text("blocked") == "1";
+        var recognized = profile.ValueKind == JsonValueKind.Object &&
+            new[] { "id", "user_id", "mac", "status", "blocked" }.Any(field => profile.TryGetProperty(field, out _));
+        if (rejected || !recognized)
+            return _accountInfo = new AccountInfo(false, profile.Text("status"), ParseExpiration(profile));
+
+        JsonElement mainInfo = default;
+        try
+        {
+            using var mainDocument = await PortalAsync("account_info", "get_main_info", [], cancellationToken);
+            mainInfo = mainDocument.RootElement.Unwrap().Clone();
+        }
+        catch (StalkerResponseException)
+        {
+            // get_main_info is an optional compatibility endpoint. A valid profile remains usable.
+        }
+
+        var status = mainInfo.Text("status") ?? profile.Text("status");
+        var expiration = ParseExpiration(mainInfo) ?? ParseExpiration(profile) ?? ParsePhoneExpiration(mainInfo);
+        return _accountInfo = new AccountInfo(true, status, expiration);
     }
 
     public Task<IReadOnlyList<ProviderCategory>> GetLiveCategoriesAsync(CancellationToken cancellationToken = default) => GetCategories("itv", cancellationToken);
@@ -349,11 +371,11 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
     private async Task<JsonDocument> PortalAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters, CancellationToken cancellationToken)
     {
         await EnsureTokenAsync(cancellationToken);
-        try { return await SendAsync(type, action, parameters, includeToken: true, cancellationToken); }
+        try { return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken); }
         catch (StalkerSessionExpiredException)
         {
             await EnsureTokenAsync(cancellationToken);
-            return await SendAsync(type, action, parameters, includeToken: true, cancellationToken);
+            return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken);
         }
     }
 
@@ -364,25 +386,61 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         try
         {
             if (_token is not null) return;
-            using var document = await SendAsync("stb", "handshake", [("token", string.Empty)], includeToken: false, cancellationToken);
-            var candidate = document.RootElement.Unwrap().Text("token");
-            if (string.IsNullOrWhiteSpace(candidate)) throw new InvalidDataException("Stalker handshake did not return a token.");
-            _token = candidate;
+            if (_requestProfile is { } selected)
+            {
+                _token = await HandshakeAsync(selected, cancellationToken);
+                return;
+            }
+
+            Exception legacyFailure;
+            try
+            {
+                var token = await HandshakeAsync(RequestProfile.Legacy, cancellationToken);
+                _requestProfile = RequestProfile.Legacy;
+                _token = token;
+                return;
+            }
+            catch (Exception exception) when (IsFallbackCompatible(exception))
+            {
+                legacyFailure = exception;
+            }
+
+            try
+            {
+                var token = await HandshakeAsync(RequestProfile.Mag254Compatible, cancellationToken);
+                _requestProfile = RequestProfile.Mag254Compatible;
+                _token = token;
+            }
+            catch (Exception magFailure) when (IsFallbackCompatible(magFailure))
+            {
+                throw StalkerResponseException.HandshakeProfilesFailed(legacyFailure, magFailure);
+            }
         }
         finally { _handshake.Release(); }
     }
 
-    private async Task<JsonDocument> SendAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters, bool includeToken, CancellationToken cancellationToken)
+    private async Task<string> HandshakeAsync(RequestProfile profile, CancellationToken cancellationToken)
+    {
+        using var document = await SendAsync("stb", "handshake", [("token", string.Empty)], includeToken: false, profile, cancellationToken);
+        var candidate = document.RootElement.Unwrap().Text("token");
+        if (string.IsNullOrWhiteSpace(candidate)) throw new InvalidDataException("handshake token absent");
+        return candidate;
+    }
+
+    private static bool IsFallbackCompatible(Exception exception) => exception is StalkerResponseException or InvalidDataException;
+
+    private async Task<JsonDocument> SendAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters, bool includeToken, RequestProfile profile, CancellationToken cancellationToken)
     {
         var mac = NormalizeMac(secret.MacAddress);
         var values = new List<(string, string)> { ("type", type), ("action", action), ("JsHttpRequest", "1-xml") };
         values.AddRange(parameters);
         var endpoint = new Uri(provider.ServerUri.GetLeftPart(UriPartial.Authority) + "/" + provider.PortalPath.TrimStart('/'));
         var uri = XtreamProviderClient.BuildUri(endpoint, values);
-        using var response = await SendWithRedirectsAsync(uri, mac, includeToken, cancellationToken);
+        using var response = await SendWithRedirectsAsync(uri, mac, includeToken, profile, cancellationToken);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             _token = null;
+            _accountInfo = null;
             if (includeToken) throw new StalkerSessionExpiredException();
             throw StalkerResponseException.For(action, response);
         }
@@ -392,13 +450,13 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         catch (JsonException exception) { throw StalkerResponseException.For(action, response, "JSON incompatible", exception); }
     }
 
-    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, RequestProfile profile, CancellationToken cancellationToken)
     {
         const int maxRedirects = 3;
         var uri = initialUri;
         for (var redirect = 0; ; redirect++)
         {
-            var response = await HttpRetry.SendAsync(http, () => CreateRequest(uri, mac, includeToken), cancellationToken);
+            var response = await HttpRetry.SendAsync(http, () => CreateRequest(uri, mac, includeToken, profile), cancellationToken);
             if (!IsRedirect(response.StatusCode) || response.Headers.Location is null) return response;
             if (redirect >= maxRedirects)
             {
@@ -414,18 +472,70 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         }
     }
 
-    private HttpRequestMessage CreateRequest(Uri uri, string mac, bool includeToken)
+    private HttpRequestMessage CreateRequest(Uri uri, string mac, bool includeToken, RequestProfile profile)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.TryAddWithoutValidation("Accept", "application/json, text/javascript, */*; q=0.01");
-        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 MAG254 stbapp");
         request.Headers.TryAddWithoutValidation("X-User-Agent", "Model: MAG254; Link: Ethernet");
-        request.Headers.TryAddWithoutValidation("Cookie", $"mac={Uri.EscapeDataString(mac)}; stb_lang=fr; timezone={Uri.EscapeDataString("Europe/Paris")}");
+        if (profile == RequestProfile.Mag254Compatible)
+        {
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG254 stbapp ver: 2 rev: 250 Safari/533.3");
+            request.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
+            request.Headers.Referrer = new Uri(provider.ServerUri.GetLeftPart(UriPartial.Authority) + "/c/");
+            request.Headers.TryAddWithoutValidation("Cookie", $"mac={mac}; stb_lang=en; timezone=Europe/Paris");
+        }
+        else
+        {
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 MAG254 stbapp");
+            request.Headers.TryAddWithoutValidation("Cookie", $"mac={Uri.EscapeDataString(mac)}; stb_lang=fr; timezone={Uri.EscapeDataString("Europe/Paris")}");
+        }
         if (includeToken && _token is not null) request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
         return request;
     }
 
     private static bool IsRedirect(HttpStatusCode status) => status is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
+
+    private static DateTimeOffset? ParseExpiration(JsonElement source)
+    {
+        if (source.ValueKind != JsonValueKind.Object) return null;
+        foreach (var field in new[] { "expire_billing_date", "tariff_expired_date", "expire_date", "expiration_date", "expires_at", "end_date", "exp_date" })
+            if (ParseDate(source.Text(field)) is { } parsed) return parsed;
+        return null;
+    }
+
+    private DateTimeOffset? ParsePhoneExpiration(JsonElement mainInfo)
+    {
+        if (mainInfo.ValueKind != JsonValueKind.Object) return null;
+        var responseMac = mainInfo.Text("mac");
+        string configuredMac;
+        try { configuredMac = NormalizeMac(secret.MacAddress); }
+        catch (InvalidOperationException) { return null; }
+        if (!string.Equals(responseMac?.Trim(), configuredMac, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var phone = mainInfo.Text("phone");
+        if (string.IsNullOrWhiteSpace(phone) || !Regex.IsMatch(phone, @"\b(?:19|20|21)\d{2}\b", RegexOptions.CultureInvariant)) return null;
+        return ParseDate(phone);
+    }
+
+    private static DateTimeOffset? ParseDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        value = value.Trim();
+        if (value is "0000-00-00" or "0000-00-00 00:00:00") return null;
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var epoch))
+        {
+            if (epoch <= 0) return null;
+            try { return epoch > 10_000_000_000 ? DateTimeOffset.FromUnixTimeMilliseconds(epoch) : DateTimeOffset.FromUnixTimeSeconds(epoch); }
+            catch (ArgumentOutOfRangeException) { return null; }
+        }
+
+        // Stalker dates without an explicit offset are interpreted as UTC. This avoids
+        // machine-local differences; explicit offsets are respected, then normalized to UTC.
+        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
+            ? parsed
+            : null;
+    }
 
     private static string NormalizeMac(string? mac)
     {
@@ -443,6 +553,7 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
         return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri : null;
     }
     private static double? ParseRating(string? value) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rating) ? rating : null;
+    private enum RequestProfile { Legacy, Mag254Compatible }
     private sealed record LiveChannel(string GenreId, CatalogItem Item);
     private sealed class StalkerSessionExpiredException : Exception { }
     private sealed class StalkerResponseException(string diagnostic, Exception? innerException = null) : Exception(diagnostic, innerException)
@@ -456,6 +567,16 @@ public sealed class StalkerProviderClient(ProviderRecord provider, ProviderSecre
             var suffix = detail is null ? string.Empty : $", {detail}";
             return new StalkerResponseException($"{phase} HTTP {(int)response.StatusCode} ({contentType}){suffix}", innerException);
         }
+
+        public static StalkerResponseException HandshakeProfilesFailed(Exception legacy, Exception mag) =>
+            new($"handshake rejected both safe request profiles (Legacy: {SafeReason(legacy)}; MAG254-compatible: {SafeReason(mag)})");
+
+        private static string SafeReason(Exception exception) => exception switch
+        {
+            StalkerResponseException response => response.Diagnostic,
+            InvalidDataException => "token absent",
+            _ => "incompatible response"
+        };
     }
 }
 

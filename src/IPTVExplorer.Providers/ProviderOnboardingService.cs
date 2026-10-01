@@ -102,7 +102,7 @@ public sealed partial class ProviderOnboardingService(ISecretStore secrets, IPro
                     [CatalogType.Series] = series
                 };
                 var protocolDetails = client is StalkerProviderClient stalker ? stalker.CategoryDiagnostic : null;
-                var diagnostic = new OnboardingDiagnosticView(attempt.Type == ProviderType.Xtream ? "Xtream" : "Stalker / MAG", account.Authenticated, account.Status ?? "Active", live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds, protocolDetails);
+                var diagnostic = new OnboardingDiagnosticView(attempt.Type == ProviderType.Xtream ? "Xtream" : "Stalker / MAG", account.Authenticated, account.Status ?? "Non communiqué", live.Count(c => !c.Technical), vod.Count(c => !c.Technical), series.Count(c => !c.Technical), stopwatch.ElapsedMilliseconds, protocolDetails);
                 draft = draft with { DetectedType = attempt.Type, PortalPath = attempt.Portal, Message = "Connection successful.", Diagnostic = diagnostic, Categories = categories };
                 _drafts[draft.Id] = draft;
                 return View(draft);

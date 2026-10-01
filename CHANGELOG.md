@@ -12,6 +12,9 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Fixed
 
+- Amélioration de la compatibilité avec certains portails Stalker/MAG nécessitant un profil de requête MAG complet.
+- Correction de la récupération des informations de compte et de la date d'expiration sur certains fournisseurs Stalker/MAG.
+
 ### Security
 
 ## [1.1.0] - 2026-09-30
