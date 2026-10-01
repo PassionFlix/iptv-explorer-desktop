@@ -27,3 +27,7 @@ test('provider changes clear catalog models before the next selector load', () =
   assert.match(app, /app\.setActiveProvider[^]*state\.catalogs\.clear\(\)[^]*refreshApp\(true\)/);
   assert.match(app, /state\.catalogs\.set\(catalog,[^]*renderCatalogSelector\(catalog\)/);
 });
+
+test('Live playback forwards the safe category id for targeted Stalker command recovery', () => {
+  assert.match(app, /categoryId: item\.categoryId/);
+});

@@ -8,15 +8,26 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
+- Sélecteur direct de catégorie au-dessus du filtre de la page Live.
+- Cache SQLite Live Stalker/MAG de six heures, actualisable explicitement depuis les paramètres.
+- Diagnostic fournisseur enrichi avec expiration, état sûr du compte, identité masquée et limites de connexions Xtream lorsqu’elles sont disponibles.
+
 ### Changed
+
+- Lecture Xtream avec un User-Agent média stable et arrêt du média précédent avant tout nouveau chargement.
+- Navigation Live Stalker servie depuis le cache persistant après la première synchronisation, sans nouveau bulk tant que le cache reste valide.
 
 ### Fixed
 
+- Chargement ciblé via `itv/get_ordered_list` des catégories Live Stalker absentes du bulk, sans analyse des autres catégories.
+- Réacquisition ciblée et uniquement en mémoire du `cmd` Stalker nécessaire à la lecture après un redémarrage.
 - Amélioration de la compatibilité avec certains portails Stalker/MAG nécessitant un profil de requête MAG complet.
 - Correction de la récupération des informations de compte et de la date d'expiration sur certains fournisseurs Stalker/MAG.
 - Correction de l’extension proposée lors du téléchargement de médias Stalker dont l’URL de lecture passe par un script PHP.
 
 ### Security
+
+- Les commandes brutes, MAC, tokens Stalker, `play_token` et URL média credentialisées restent exclus du cache Live persistant.
 
 ## [1.1.0] - 2026-09-30
 

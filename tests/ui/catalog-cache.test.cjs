@@ -76,6 +76,18 @@ test('catalog status is local and never initiates a refresh', async () => {
   assert.match(f.elements.get('#catalog-refreshed-at').textContent, /jamais/);
 });
 
+test('Stalker settings expose explicit Live refresh and a six-hour local cache', async () => {
+  const f = fixture(['loadCatalogStatus']);
+  f.state.activeProviderKey = 'stalker';
+  f.context.rpc = async (method, params) => { f.calls.push({ method, params }); return { refreshedAt: '2026-10-01T12:00:00Z' }; };
+  await f.context.loadCatalogStatus();
+  assert.deepEqual(f.calls.map(call => call.method), ['catalog.status']);
+  assert.equal(f.elements.get('#refresh-catalog').textContent, 'Actualiser le Live');
+  assert.equal(f.elements.get('#catalog-snapshot-kind').textContent, 'LIVE STALKER');
+  assert.match(f.elements.get('#catalog-refreshed-at').textContent, /Dernière actualisation Live/);
+  assert.match(f.elements.get('#catalog-refresh-state').textContent, /6 heures/);
+});
+
 test('index completion refreshes home locally and discards stale provider responses', { timeout: 1000 }, async () => {
   const f = fixture(['pollIndex']); const pending = deferred(), entered = deferred();
   f.context.rpc = async (method, params) => {
