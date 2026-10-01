@@ -33,6 +33,8 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Fixed
 
+- Le thème « Système » suit désormais correctement le thème clair ou sombre de Windows.
+- Clarification de l’étape de connexion Xtream lors de l’ajout d’un fournisseur.
 - Sécurisation du runtime libmpv lors des builds et packages de release grâce à la vérification des empreintes de l’archive et de la DLL.
 - Nettoyage correct des téléchargements à leur fin ou lors de la fermeture de l’application.
 - Protection étendue des informations sensibles et des signatures d’URL dans les journaux.

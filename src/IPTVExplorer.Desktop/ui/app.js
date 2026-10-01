@@ -45,6 +45,10 @@
   function toast(message, error = false) { const box = $('#toast'); box.textContent = message; box.style.background = error ? '#8c3242' : '#202c40'; box.classList.add('show'); window.setTimeout(() => box.classList.remove('show'), 3200); }
   function isAbort(error) { return error && error.name === 'AbortError'; }
   function activeProvider() { return state.app?.providers.find(provider => provider.key === state.activeProviderKey) || null; }
+  function applyThemePreference(theme) {
+    if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
+    else document.documentElement.removeAttribute('data-theme');
+  }
 
   async function refreshApp(goHome = false) {
     state.app = await rpc('app.getState');
@@ -347,7 +351,13 @@
   function resetOnboarding() { onboardingForm.reset(); onboardingForm.elements.password.value = ''; onboardingForm.elements.macAddress.value = ''; state.onboarding = { step: 1, draft: null, catalog: 'live', policies: {} }; $('#onboarding-error').textContent = ''; $('#onboarding-diagnostic').replaceChildren(); updateCredentialFields(); setWizardStep(1); }
   $$('.open-onboarding').forEach(value => value.addEventListener('click', () => { resetOnboarding(); onboardingDialog.showModal(); }));
   onboardingForm.elements.providerType.addEventListener('change', updateCredentialFields);
-  function updateCredentialFields() { const type = onboardingForm.elements.providerType.value; $('#xtream-fields').style.display = type === 'stalker' ? 'none' : 'grid'; $('#stalker-fields').style.display = type === 'xtream' ? 'none' : 'block'; }
+  function onboardingExplanation(type) {
+    type = String(type || '').toLowerCase();
+    if (type === 'xtream') return 'Le test effectue un contrôle minimal. Le catalogue sera chargé localement après activation du fournisseur.';
+    if (type === 'stalker') return 'Le test vérifie la session Stalker/MAG et charge les catégories disponibles.';
+    return 'Le test détecte le type avec le minimum d’appels nécessaire. Un catalogue Xtream sera chargé localement après activation.';
+  }
+  function updateCredentialFields() { const type = onboardingForm.elements.providerType.value; $('#xtream-fields').style.display = type === 'stalker' ? 'none' : 'grid'; $('#stalker-fields').style.display = type === 'xtream' ? 'none' : 'block'; $('#onboarding-test-explanation').textContent = onboardingExplanation(type); }
   function setWizardStep(step) { state.onboarding.step = step; $$('.wizard-step').forEach(value => value.classList.toggle('active', Number(value.dataset.step) === step)); $$('#onboarding-dialog .steps span').forEach((value, index) => { value.classList.toggle('current', index + 1 === step); value.classList.toggle('done', index + 1 < step); }); $('#wizard-previous').disabled = step === 1; $('#wizard-next').classList.toggle('hidden', step >= 5); $('#save-provider').classList.toggle('hidden', step !== 5); if (step === 4) renderOnboardingCategories(); if (step === 5) $('#onboarding-summary').textContent = `${state.onboarding.draft.name} · ${state.onboarding.draft.detectedType.toUpperCase()} · ${state.onboarding.draft.credentialStatus}`; }
   $('#wizard-previous').addEventListener('click', () => setWizardStep(Math.max(1, state.onboarding.step - 1)));
   $('#wizard-next').addEventListener('click', () => { const step = state.onboarding.step; if (step === 1 && !validateStep($('.wizard-step[data-step="1"]'))) return; if (step === 2 && !validateCredentials()) return; if (step === 3 && !state.onboarding.draft?.detectedType) { $('#onboarding-error').textContent = 'Testez la connexion avant de continuer.'; return; } setWizardStep(Math.min(5, step + 1)); });
@@ -362,16 +372,30 @@
       const tested = await rpc('providers.test', { draftId: draft.id }, 'onboarding');
       if (!tested.detectedType) throw new Error(tested.message || 'Identifiants refusés.'); state.onboarding.draft = tested;
       for (const catalog of ['live', 'vod', 'series']) { const items = tested.categories[catalog] || []; state.onboarding.policies[catalog] = { items, selected: new Set(items.map(item => item.remoteId)), mode: 'all' }; }
-      diagnostic.replaceChildren(renderDiagnostic(tested.diagnostic)); toast('Connexion validée.');
+      $('#onboarding-test-explanation').textContent = onboardingExplanation(tested.detectedType);
+      const success = String(tested.detectedType).toLowerCase() === 'xtream'
+        ? 'Connexion validée. Le catalogue sera chargé localement après activation du fournisseur.'
+        : 'Connexion validée. Les catégories disponibles peuvent être sélectionnées avant l’enregistrement.';
+      diagnostic.replaceChildren(renderDiagnostic(tested.diagnostic, true), node('p', 'hint', success)); toast('Connexion validée.');
     } catch (error) { if (!isAbort(error)) diagnostic.replaceChildren(node('p', 'form-error', error.message)); }
     finally { $('#test-provider').disabled = false; }
   });
-  function renderDiagnostic(data) { const grid = node('div', 'diagnostic-grid'); if (!data) return grid; [[data.type, 'Type détecté'], [data.authenticated ? '✓' : '✕', `Compte ${data.account}`], [data.live, 'Live'], [data.vod, 'Films'], [data.series, 'Séries'], [`${data.latencyMs} ms`, 'Latence']].forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); }); if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails)); return grid; }
+  function renderDiagnostic(data, onboarding = false) { const grid = node('div', 'diagnostic-grid'); if (!data) return grid; const values = [[data.type, 'Type détecté'], [data.authenticated ? '✓' : '✕', `Compte ${data.account}`]]; const xtreamOnboarding = onboarding && String(data.type).toLowerCase() === 'xtream'; if (!xtreamOnboarding) values.push([data.live, 'Live'], [data.vod, 'Films'], [data.series, 'Séries']); values.push([`${data.latencyMs} ms`, 'Latence']); values.forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); }); if (xtreamOnboarding) grid.append(node('span', 'muted', 'Catalogue local après activation')); if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails)); return grid; }
   $$('.onboarding-tabs button').forEach(value => value.addEventListener('click', () => { $$('.onboarding-tabs button').forEach(buttonValue => buttonValue.classList.remove('active')); value.classList.add('active'); state.onboarding.catalog = value.dataset.onboardingCatalog; renderOnboardingCategories(); }));
   $('#onboarding-filter').addEventListener('input', renderOnboardingCategories);
   $('#onboarding-all').addEventListener('click', () => { const model = state.onboarding.policies[state.onboarding.catalog]; model.selected = new Set(model.items.map(item => item.remoteId)); model.mode = 'all'; renderOnboardingCategories(); });
   $('#onboarding-none').addEventListener('click', () => { const model = state.onboarding.policies[state.onboarding.catalog]; model.selected.clear(); model.mode = 'none'; renderOnboardingCategories(); });
-  function renderOnboardingCategories() { const model = state.onboarding.policies[state.onboarding.catalog], container = $('#onboarding-categories'); container.replaceChildren(); if (!model) return; renderPolicyRows(container, model, $('#onboarding-filter').value); $('#onboarding-count').textContent = `${model.selected.size} / ${model.items.length}`; }
+  function renderOnboardingCategories() {
+    const model = state.onboarding.policies[state.onboarding.catalog], container = $('#onboarding-categories');
+    const xtream = String(state.onboarding.draft?.detectedType || '').toLowerCase() === 'xtream';
+    $('#onboarding-category-selection').classList.toggle('hidden', xtream);
+    $('#onboarding-category-info').classList.toggle('hidden', !xtream);
+    $('#onboarding-category-info').textContent = xtream ? 'Connexion validée. Live, Films et Séries seront synchronisés localement lors de l’activation.' : '';
+    container.replaceChildren(); $('#onboarding-count').textContent = '';
+    if (xtream || !model) return;
+    renderPolicyRows(container, model, $('#onboarding-filter').value);
+    $('#onboarding-count').textContent = `${model.selected.size} / ${model.items.length}`;
+  }
   onboardingForm.addEventListener('submit', async event => { event.preventDefault(); const policies = {}; for (const catalog of ['live', 'vod', 'series']) { const model = state.onboarding.policies[catalog]; policies[catalog] = { mode: model.mode, selectedIds: [...model.selected] }; } try { await rpc('providers.save', { draftId: state.onboarding.draft.id, enable: onboardingForm.elements.enableProvider.checked, policies }); onboardingDialog.close(); await refreshApp(true); toast('Fournisseur enregistré.'); } catch (error) { $('#onboarding-error').textContent = error.message; } });
 
   function renderProviderSettings() {
@@ -458,8 +482,8 @@
     if (job.error) target.append(node('p', 'form-error', job.error));
   }
 
-  async function loadPreferences() { try { const preferences = await rpc('settings.get'); const form = $('#preferences-form'); for (const key of ['interfaceLanguage', 'theme', 'audioLanguage', 'secondaryAudioLanguage', 'subtitleLanguage']) if (form.elements[key]) form.elements[key].value = preferences[key] || 'auto'; form.elements.automaticForcedSubtitles.checked = preferences.automaticForcedSubtitles; document.documentElement.dataset.theme = preferences.theme === 'system' ? '' : preferences.theme; } catch { } }
-  $('#preferences-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const preferences = { activeProviderKey: state.activeProviderKey, interfaceLanguage: form.elements.interfaceLanguage.value, theme: form.elements.theme.value, audioLanguage: form.elements.audioLanguage.value || 'auto', secondaryAudioLanguage: form.elements.secondaryAudioLanguage.value || 'auto', subtitleLanguage: form.elements.subtitleLanguage.value || 'auto', automaticForcedSubtitles: form.elements.automaticForcedSubtitles.checked }; try { await rpc('settings.save', preferences); document.documentElement.dataset.theme = preferences.theme === 'system' ? '' : preferences.theme; toast('Préférences enregistrées.'); } catch (error) { toast(error.message, true); } });
+  async function loadPreferences() { try { const preferences = await rpc('settings.get'); const form = $('#preferences-form'); for (const key of ['interfaceLanguage', 'theme', 'audioLanguage', 'secondaryAudioLanguage', 'subtitleLanguage']) if (form.elements[key]) form.elements[key].value = preferences[key] || 'auto'; form.elements.automaticForcedSubtitles.checked = preferences.automaticForcedSubtitles; applyThemePreference(preferences.theme); } catch { } }
+  $('#preferences-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const preferences = { activeProviderKey: state.activeProviderKey, interfaceLanguage: form.elements.interfaceLanguage.value, theme: form.elements.theme.value, audioLanguage: form.elements.audioLanguage.value || 'auto', secondaryAudioLanguage: form.elements.secondaryAudioLanguage.value || 'auto', subtitleLanguage: form.elements.subtitleLanguage.value || 'auto', automaticForcedSubtitles: form.elements.automaticForcedSubtitles.checked }; try { await rpc('settings.save', preferences); applyThemePreference(preferences.theme); toast('Préférences enregistrées.'); } catch (error) { toast(error.message, true); } });
 
   $$('.close-dialog').forEach(value => value.addEventListener('click', () => value.closest('dialog').close()));
   refreshApp().then(loadPreferences).catch(error => toast(error.message, true));
