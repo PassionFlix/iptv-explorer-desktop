@@ -37,6 +37,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
     private readonly IPlaybackHistoryRepository _history;
     private readonly IPlayerService _player;
     private readonly IPlayerWindowManager _windows;
+    private readonly IPlaybackDiagnosticTrace _trace;
     private readonly PlaybackProgressRecorder _recorder;
     private readonly object _resumeLock = new();
     private TimeSpan? _pendingResumePosition;
@@ -46,13 +47,15 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         IProviderClientFactory clients,
         IPlaybackHistoryRepository history,
         IPlayerService player,
-        IPlayerWindowManager windows)
+        IPlayerWindowManager windows,
+        IPlaybackDiagnosticTrace? diagnosticTrace = null)
     {
         _providers = providers;
         _clients = clients;
         _history = history;
         _player = player;
         _windows = windows;
+        _trace = diagnosticTrace ?? NullPlaybackDiagnosticTrace.Instance;
         _recorder = new PlaybackProgressRecorder(history);
         _player.MediaLoaded += OnMediaLoaded;
         _player.PositionChanged += OnPositionChanged;
@@ -111,8 +114,19 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
             var playbackId = reference.EpisodeId ?? reference.MediaId;
             var request = new MediaRequest(reference.MediaType, playbackId, reference.MediaType == CatalogType.Series ? reference.MediaId : null,
                 reference.Extension, reference.CategoryId);
-            var resolved = await client.ResolveMediaAsync(request, cancellationToken);
+            ResolvedMedia resolved;
+            try
+            {
+                resolved = await client.ResolveMediaAsync(request, cancellationToken);
+                TraceResolved(provider.Type, reference.MediaType, playbackId, resolved);
+            }
+            catch (Exception exception)
+            {
+                TraceResolutionError(provider.Type, reference.MediaType, playbackId, exception);
+                throw;
+            }
             lock (_resumeLock) _pendingResumePosition = resumePosition is { } position && position > TimeSpan.Zero ? position : null;
+            TraceLoadRequest(provider.Type, reference.MediaType, playbackId, resolved);
             await _player.LoadAsync(resolved, renderHostHandle, cancellationToken);
 
             if (reference.MediaType == CatalogType.Series && reference.EpisodeId is not null)
@@ -193,9 +207,9 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
                     episode.Episode);
                 await _recorder.BeginAsync(CreateProgress(nextReference), token);
                 lock (_resumeLock) _pendingResumePosition = null;
-                var media = await client.ResolveMediaAsync(
-                    new MediaRequest(CatalogType.Series, episode.Id, details.Id, episode.Extension),
-                    token);
+                var media = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Series, episode.Id, details.Id, episode.Extension), token);
+                TraceResolved(client.Type, CatalogType.Series, episode.Id, media);
+                TraceLoadRequest(client.Type, CatalogType.Series, episode.Id, media);
                 await _player.LoadAsync(media, renderHostHandle, token);
             });
         }
@@ -277,6 +291,46 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(value) || value.Length > 512 || Uri.TryCreate(value, UriKind.Absolute, out _))
             throw new ArgumentException("Invalid opaque media reference.", parameter);
     }
+
+    private void TraceResolved(ProviderType providerType, CatalogType mediaType, string mediaId, ResolvedMedia media)
+    {
+        if (!_trace.Enabled || providerType != ProviderType.Stalker) return;
+        _trace.Write("STALKER PLAYBACK RESOLVED",
+            Field("layer", "coordinator"),
+            Field("provider_type", providerType.ToString()),
+            Field("media_type", mediaType.ToString()),
+            Field("media_id", SafePlaybackDiagnosticData.OpaqueId(mediaId)),
+            Field("scheme", SafePlaybackDiagnosticData.Scheme(media.Uri)),
+            Field("path", SafePlaybackDiagnosticData.PathBaseName(media.Uri)),
+            Field("query_keys", SafePlaybackDiagnosticData.QueryKeyNames(media.Uri)),
+            Field("header_names", SafePlaybackDiagnosticData.HeaderNames(media.Headers)));
+    }
+
+    private void TraceResolutionError(ProviderType providerType, CatalogType mediaType, string mediaId, Exception exception)
+    {
+        if (!_trace.Enabled || providerType != ProviderType.Stalker) return;
+        _trace.Write("STALKER PLAYBACK RESOLVE ERROR",
+            Field("layer", "coordinator"),
+            Field("provider_type", providerType.ToString()),
+            Field("media_type", mediaType.ToString()),
+            Field("media_id", SafePlaybackDiagnosticData.OpaqueId(mediaId)),
+            Field("error_type", exception.GetType().Name));
+    }
+
+    private void TraceLoadRequest(ProviderType providerType, CatalogType mediaType, string mediaId, ResolvedMedia media)
+    {
+        if (!_trace.Enabled) return;
+        _trace.Write("PLAYBACK LOAD REQUEST",
+            Field("provider_type", providerType.ToString()),
+            Field("media_type", mediaType.ToString()),
+            Field("media_id", SafePlaybackDiagnosticData.OpaqueId(mediaId)),
+            Field("scheme", SafePlaybackDiagnosticData.Scheme(media.Uri)),
+            Field("path", SafePlaybackDiagnosticData.PathBaseName(media.Uri)),
+            Field("query_keys", SafePlaybackDiagnosticData.QueryKeyNames(media.Uri)),
+            Field("header_names", SafePlaybackDiagnosticData.HeaderNames(media.Headers)));
+    }
+
+    private static PlaybackDiagnosticField Field(string name, string value) => new(name, value);
 
     public async ValueTask DisposeAsync()
     {

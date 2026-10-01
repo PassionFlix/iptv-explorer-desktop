@@ -6,7 +6,8 @@ public sealed class ProviderClientFactory(
     IHttpClientFactory httpClients,
     ISecretStore secrets,
     IStalkerLiveCatalogStore? stalkerLiveCatalog = null,
-    TimeProvider? clock = null) : IRemoteProviderClientFactory
+    TimeProvider? clock = null,
+    IPlaybackDiagnosticTrace? diagnosticTrace = null) : IRemoteProviderClientFactory
 {
     private readonly SemaphoreSlim _xtreamRequests = new(1, 1);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, StalkerClientCacheEntry> _stalkerClients = new(StringComparer.Ordinal);
@@ -35,7 +36,7 @@ public sealed class ProviderClientFactory(
         var signature = new StalkerClientSignature(provider.ServerUri, provider.PortalPath, provider.SecretReference);
         if (_stalkerClients.TryGetValue(provider.Key, out var cached) && cached.Signature == signature) return cached.Client;
 
-        var client = new StalkerProviderClient(provider, secret, httpClients.CreateClient("providers"), stalkerLiveCatalog, clock);
+        var client = new StalkerProviderClient(provider, secret, httpClients.CreateClient("providers"), stalkerLiveCatalog, clock, diagnosticTrace);
         return _stalkerClients.AddOrUpdate(
             provider.Key,
             _ => new StalkerClientCacheEntry(signature, client),

@@ -13,12 +13,14 @@ public sealed class StalkerProviderClient(
     ProviderSecret secret,
     HttpClient http,
     IStalkerLiveCatalogStore? liveCatalogStore = null,
-    TimeProvider? clock = null) : IProviderClient, IStalkerLiveCatalogClient
+    TimeProvider? clock = null,
+    IPlaybackDiagnosticTrace? diagnosticTrace = null) : IProviderClient, IStalkerLiveCatalogClient
 {
     public static readonly TimeSpan LiveCatalogCacheDuration = TimeSpan.FromHours(6);
     private readonly SemaphoreSlim _handshake = new(1, 1);
     private readonly SemaphoreSlim _liveCatalogLock = new(1, 1);
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    private readonly IPlaybackDiagnosticTrace _trace = diagnosticTrace ?? NullPlaybackDiagnosticTrace.Instance;
     private readonly object _manualLiveRefreshGate = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(CatalogType Catalog, string Id), string> _commands = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Task<IReadOnlyList<LiveChannel>>>> _liveCategoryFallbacks = new(StringComparer.Ordinal);
@@ -183,34 +185,88 @@ public sealed class StalkerProviderClient(
 
     public async Task<ResolvedMedia> ResolveMediaAsync(MediaRequest request, CancellationToken cancellationToken = default)
     {
+        var commandCached = _commands.ContainsKey((request.Catalog, request.MediaId));
+        Trace("STALKER RESOLVE START",
+            Field("catalog", request.Catalog.ToString()),
+            Field("media_id", SafePlaybackDiagnosticData.OpaqueId(request.MediaId)),
+            Field("category_id_present", SafePlaybackDiagnosticData.Bool(!string.IsNullOrWhiteSpace(request.CategoryId))),
+            Field("command_cached", SafePlaybackDiagnosticData.Bool(commandCached)),
+            Field("profile", _requestProfile?.ToString() ?? "none"),
+            Field("mag_bootstrap", SafePlaybackDiagnosticData.Bool(_magProfileBootstrapped)));
+        try { return await ResolveMediaCoreAsync(request, cancellationToken); }
+        catch (Exception exception)
+        {
+            Trace("STALKER PLAYBACK RESOLVE ERROR", Field("error_type", exception.GetType().Name));
+            throw;
+        }
+    }
+
+    private async Task<ResolvedMedia> ResolveMediaCoreAsync(MediaRequest request, CancellationToken cancellationToken)
+    {
         var command = await ResolveCommandAsync(request, cancellationToken);
+        var originalUrl = ExtractHttpUri(command);
         var parameters = new List<(string, string)> { ("cmd", command) };
         if (request.Catalog == CatalogType.Series) parameters.Add(("series", "1"));
         var portalType = request.Catalog == CatalogType.Live ? "itv" : "vod";
+        Trace("STALKER CREATE LINK", Field("create_link_type", portalType));
         // Episodes intentionally use vod/create_link with series=1; live channels use itv/create_link.
         using var document = await PortalAsync(portalType, "create_link", parameters, cancellationToken);
         var root = document.RootElement.Unwrap();
         var resolvedCommand = root.ValueKind == JsonValueKind.Object ? root.Text("cmd", "url") : root.ToString();
         var url = ExtractHttpUri(resolvedCommand);
         if (url is null) throw new InvalidDataException("Provider did not return a playable link.");
-        if (request.Catalog != CatalogType.Live) return new ResolvedMedia(url);
+        if (request.Catalog != CatalogType.Live) return TraceResolved(request, new ResolvedMedia(url), originalUrl, url, hybrid: false);
 
-        var originalUrl = ExtractHttpUri(command);
-        if (originalUrl is null) return new ResolvedMedia(url);
+        if (originalUrl is null) return TraceResolved(request, new ResolvedMedia(url), null, url, hybrid: false);
 
         var resolvedQuery = QueryValues(url);
         if (!resolvedQuery.TryGetValue("stream", out var resolvedStream) || !string.IsNullOrEmpty(resolvedStream))
-            return new ResolvedMedia(url);
+            return TraceResolved(request, new ResolvedMedia(url), originalUrl, url, hybrid: false);
 
         var originalQuery = QueryValues(originalUrl);
         if (!originalQuery.TryGetValue("stream", out var originalStream) || string.IsNullOrWhiteSpace(originalStream))
-            return new ResolvedMedia(url);
+            return TraceResolved(request, new ResolvedMedia(url), originalUrl, url, hybrid: false);
 
         if (!resolvedQuery.TryGetValue("play_token", out var playToken) || string.IsNullOrWhiteSpace(playToken))
             throw new InvalidDataException("Provider did not return a live playback token.");
 
         var hybridUrl = BuildHybridLiveUri(originalUrl, resolvedQuery);
-        return new ResolvedMedia(hybridUrl, BuildLivePlaybackHeaders(playToken));
+        return TraceResolved(request, new ResolvedMedia(hybridUrl, BuildLivePlaybackHeaders(playToken)), originalUrl, url, hybrid: true);
+    }
+
+    private ResolvedMedia TraceResolved(MediaRequest request, ResolvedMedia media, Uri? originalUrl, Uri? resolvedUrl, bool hybrid)
+    {
+        if (!_trace.Enabled) return media;
+        var fields = new List<PlaybackDiagnosticField>
+        {
+            new("catalog", request.Catalog.ToString()),
+            new("media_id", SafePlaybackDiagnosticData.OpaqueId(request.MediaId)),
+            new("original_url_detected", SafePlaybackDiagnosticData.Bool(originalUrl is not null)),
+            new("resolved_url_detected", SafePlaybackDiagnosticData.Bool(resolvedUrl is not null)),
+            new("final_scheme", SafePlaybackDiagnosticData.Scheme(media.Uri)),
+            new("final_path", SafePlaybackDiagnosticData.PathBaseName(media.Uri)),
+            new("final_query_keys", SafePlaybackDiagnosticData.QueryKeyNames(media.Uri)),
+            new("header_names", SafePlaybackDiagnosticData.HeaderNames(media.Headers)),
+            new("cookie_names", SafePlaybackDiagnosticData.CookieNames(media.Headers)),
+            new("hybrid", SafePlaybackDiagnosticData.Bool(hybrid))
+        };
+        if (request.Catalog == CatalogType.Live)
+        {
+            var originalQuery = originalUrl is null ? null : QueryValues(originalUrl);
+            var resolvedQuery = resolvedUrl is null ? null : QueryValues(resolvedUrl);
+            fields.AddRange([
+                new("original_path", SafePlaybackDiagnosticData.PathBaseName(originalUrl)),
+                new("resolved_path", SafePlaybackDiagnosticData.PathBaseName(resolvedUrl)),
+                new("original_has_stream", SafePlaybackDiagnosticData.Bool(originalQuery?.ContainsKey("stream") == true)),
+                new("original_stream_empty", SafePlaybackDiagnosticData.Bool(originalQuery?.TryGetValue("stream", out var originalStream) == true && string.IsNullOrWhiteSpace(originalStream))),
+                new("resolved_has_stream", SafePlaybackDiagnosticData.Bool(resolvedQuery?.ContainsKey("stream") == true)),
+                new("resolved_stream_empty", SafePlaybackDiagnosticData.Bool(resolvedQuery?.TryGetValue("stream", out var resolvedStream) == true && string.IsNullOrWhiteSpace(resolvedStream))),
+                new("play_token_present", SafePlaybackDiagnosticData.Bool(resolvedQuery?.TryGetValue("play_token", out var playToken) == true && !string.IsNullOrWhiteSpace(playToken))),
+                new("sn2_present", SafePlaybackDiagnosticData.Bool(resolvedQuery?.TryGetValue("sn2", out var sn2) == true && !string.IsNullOrWhiteSpace(sn2)))
+            ]);
+        }
+        _trace.Write("STALKER PLAYBACK RESOLVED", fields.ToArray());
+        return media;
     }
 
     private async Task<IReadOnlyList<ProviderCategory>> GetCategories(string type, CancellationToken cancellationToken)
@@ -549,6 +605,7 @@ public sealed class StalkerProviderClient(
         try { return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken, retryTransient); }
         catch (StalkerSessionExpiredException)
         {
+            Trace("STALKER SESSION REAUTHENTICATE", Field("reason", "token_expired"));
             await EnsureTokenAsync(cancellationToken);
             return await SendAsync(type, action, parameters, includeToken: true, _requestProfile!.Value, cancellationToken, retryTransient);
         }
@@ -572,6 +629,7 @@ public sealed class StalkerProviderClient(
             {
                 var token = await HandshakeAsync(RequestProfile.Legacy, cancellationToken);
                 _requestProfile = RequestProfile.Legacy;
+                Trace("STALKER SESSION PROFILE SELECTED", Field("profile", RequestProfile.Legacy.ToString()));
                 _token = token;
                 _sessionProfile = null;
                 _magProfileBootstrapped = false;
@@ -585,6 +643,7 @@ public sealed class StalkerProviderClient(
             try
             {
                 _requestProfile = RequestProfile.Mag254Compatible;
+                Trace("STALKER SESSION PROFILE SELECTED", Field("profile", RequestProfile.Mag254Compatible.ToString()));
                 await EstablishSessionAsync(RequestProfile.Mag254Compatible, cancellationToken);
             }
             catch (Exception magFailure) when (IsFallbackCompatible(magFailure))
@@ -619,10 +678,12 @@ public sealed class StalkerProviderClient(
         if (_token is null || _requestProfile != RequestProfile.Mag254Compatible)
             throw new InvalidOperationException("A MAG session token is required before profile bootstrap.");
 
+        Trace("STALKER SESSION MAG BOOTSTRAP START", Field("profile", RequestProfile.Mag254Compatible.ToString()));
         using var document = await SendAsync("stb", "get_profile", BuildMagProfileParameters(), includeToken: true,
             RequestProfile.Mag254Compatible, cancellationToken);
         _sessionProfile = document.RootElement.Unwrap().Clone();
         _magProfileBootstrapped = true;
+        Trace("STALKER SESSION MAG BOOTSTRAP SUCCESS", Field("profile", RequestProfile.Mag254Compatible.ToString()));
     }
 
     private async Task<JsonElement> GetAccountProfileAsync(CancellationToken cancellationToken)
@@ -661,9 +722,11 @@ public sealed class StalkerProviderClient(
 
     private async Task<string> HandshakeAsync(RequestProfile profile, CancellationToken cancellationToken)
     {
+        Trace("STALKER SESSION HANDSHAKE START", Field("profile", profile.ToString()));
         using var document = await SendAsync("stb", "handshake", [("token", string.Empty)], includeToken: false, profile, cancellationToken);
         var candidate = document.RootElement.Unwrap().Text("token");
         if (string.IsNullOrWhiteSpace(candidate)) throw new InvalidDataException("handshake token absent");
+        Trace("STALKER SESSION HANDSHAKE SUCCESS", Field("profile", profile.ToString()));
         return candidate;
     }
 
@@ -692,11 +755,20 @@ public sealed class StalkerProviderClient(
 
     private void InvalidateSession()
     {
+        var hadToken = _token is not null;
         _token = null;
         _accountInfo = null;
         _sessionProfile = null;
         _magProfileBootstrapped = false;
+        if (hadToken) Trace("STALKER SESSION TOKEN INVALIDATED", Field("profile", _requestProfile?.ToString() ?? "none"));
     }
+
+    private void Trace(string eventName, params PlaybackDiagnosticField[] fields)
+    {
+        if (_trace.Enabled) _trace.Write(eventName, fields);
+    }
+
+    private static PlaybackDiagnosticField Field(string name, string value) => new(name, value);
 
     private async Task<HttpResponseMessage> SendWithRedirectsAsync(Uri initialUri, string mac, bool includeToken, RequestProfile profile,
         CancellationToken cancellationToken, bool retryTransient)

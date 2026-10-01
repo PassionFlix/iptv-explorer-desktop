@@ -41,6 +41,7 @@ public partial class App : Application
             builder.Services.AddSingleton<RecentSeriesArtwork>();
             builder.Services.AddSingleton<CatalogSnapshotRepository>();
             builder.Services.AddSingleton<IStalkerLiveCatalogStore>(sp => sp.GetRequiredService<CatalogSnapshotRepository>());
+            builder.Services.AddSingleton<IPlaybackDiagnosticTrace, SafePlaybackDiagnosticTrace>();
             builder.Services.AddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<CatalogRefreshService>();
             builder.Services.AddSingleton<MediaDetailService>();

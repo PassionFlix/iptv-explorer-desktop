@@ -20,7 +20,8 @@ public sealed class PlayerPhase3Tests
         var player = new RecordingPlayerService();
         var windows = new RecordingWindowManager((nint)4242);
         var history = new PlaybackHistoryRepository(database.Connections);
-        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows);
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows, trace);
 
         var result = await coordinator.OpenAsync(new MediaReference(provider.Key, CatalogType.Vod, "movie-42", Extension: "mkv"));
 
@@ -32,6 +33,10 @@ public sealed class PlayerPhase3Tests
         Assert.DoesNotContain("user-demo", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("password-demo", serialized, StringComparison.Ordinal);
         Assert.Equal("opened", result.State);
+        Assert.Contains("PLAYBACK LOAD REQUEST provider_type=Xtream", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://", trace.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("user-demo", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("password-demo", trace.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -286,6 +291,61 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
+    public async Task LibMpvTraceReportsSafeLoadSummaryAndNumericResult()
+    {
+        var api = new RecordingMpvApi { LoadFileResult = -13 };
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api), trace);
+        var media = new ResolvedMedia(
+            new Uri("https://media.example.invalid/live.php?stream=private-stream&play_token=private-play-token"),
+            new Dictionary<string, string>
+            {
+                ["Authorization"] = "Bearer private-authorization",
+                ["Cookie"] = "mac=00:1A:79:AA:BB:CC; token=private-session"
+            });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => player.LoadAsync(media, (nint)656));
+
+        Assert.Contains("LIBMPV LOADFILE ", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("scheme=https", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("path=live.php", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("query_keys=play_token,stream", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("header_names=Authorization,Cookie", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("cookie_names=mac,stb_lang,timezone,token,play_token", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("LIBMPV LOADFILE RESULT result=-13", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://", trace.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("private-stream", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-play-token", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-authorization", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-session", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("00:1A:79:AA:BB:CC", trace.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LibMpvTraceReportsRelevantEventsWithoutPayloads()
+    {
+        var api = new RecordingMpvApi();
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api), trace);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        player.StateChanged += (_, value) =>
+        {
+            if (value.State == PlayerState.Stopped) stopped.TrySetResult();
+        };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/live.php")), (nint)657);
+        api.Enqueue(new(MpvEventKind.StartFile));
+        api.Enqueue(new(MpvEventKind.PlaybackRestart));
+        api.Enqueue(new(MpvEventKind.EndFile, ErrorCode: -12, EndReason: 4));
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Contains("event=start-file", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("event=playback-restart", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("event=end-file reason=4 code=-12", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("media.example.invalid", trace.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LoadingAnotherMediaStopsThePreviousSelectionBeforeReplacement()
     {
         var api = new RecordingMpvApi();
@@ -448,13 +508,14 @@ public sealed class PlayerPhase3Tests
         public ConcurrentQueue<LoadFileCall> Loads { get; } = [];
         public ConcurrentQueue<string[]> Commands { get; } = [];
         public int CreateCalls { get; private set; }
+        public int LoadFileResult { get; init; }
         public bool Terminated { get; private set; }
         public bool Disposed { get; private set; }
         public nint Create() { CreateCalls++; return (nint)55; }
         public int SetOptionString(nint handle, string name, string value) { Options.Enqueue((name, value)); return 0; }
         public int Initialize(nint handle) => 0;
         public int Command(nint handle, params string[] arguments) { Commands.Enqueue(arguments); return 0; }
-        public int LoadFile(nint handle, string uri, string? httpHeaderFields) { Loads.Enqueue(new(uri, httpHeaderFields)); return 0; }
+        public int LoadFile(nint handle, string uri, string? httpHeaderFields) { Loads.Enqueue(new(uri, httpHeaderFields)); return LoadFileResult; }
         public int SetPropertyString(nint handle, string name, string value) { Properties.Enqueue((name, value)); return 0; }
         public int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format) { ObservedProperties.Enqueue(name); return 0; }
         public MpvEventValue WaitEvent(nint handle, double timeoutSeconds)

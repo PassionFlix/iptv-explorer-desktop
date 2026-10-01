@@ -1,6 +1,7 @@
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
 using Microsoft.Data.Sqlite;
+using System.Collections.Concurrent;
 
 namespace IPTVExplorer.Tests;
 
@@ -86,4 +87,18 @@ internal sealed class StalkerFixtureHandler : HttpMessageHandler
         var json = query.Contains("action=handshake", StringComparison.Ordinal) ? "{\"js\":{\"token\":\"session-token-demo\"}}" : "{\"js\":{\"id\":\"fixture-profile\",\"status\":\"active\"}}";
         return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") });
     }
+}
+
+internal sealed class RecordingPlaybackDiagnosticTrace(bool enabled = true) : IPlaybackDiagnosticTrace
+{
+    public bool Enabled { get; } = enabled;
+    public ConcurrentQueue<string> Events { get; } = new();
+
+    public void Write(string eventName, params PlaybackDiagnosticField[] fields)
+    {
+        if (!Enabled) return;
+        Events.Enqueue($"{eventName} {string.Join(' ', fields.Select(field => $"{field.Name}={field.Value}"))}".TrimEnd());
+    }
+
+    public string Text => string.Join(Environment.NewLine, Events);
 }
