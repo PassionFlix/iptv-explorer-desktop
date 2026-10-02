@@ -102,6 +102,8 @@ function fixture(titles = ['E03 — Épisode court']) {
   const detailTitle = new Element('h2', '', 'Série fixture'); detailTitle.id = 'detail-title';
   const ids = new Map([[content.id, content], [dialog.id, dialog], [toast.id, toast], [provider.id, provider], [detailTitle.id, detailTitle]]);
   const outbound = [];
+  const sharedPending = new Map();
+  let sharedSequence = 0;
   let messageHandler;
   const document = {
     readyState: 'complete',
@@ -115,12 +117,22 @@ function fixture(titles = ['E03 — Épisode court']) {
       addEventListener(type, callback) { if (type === 'message') messageHandler = callback; },
       postMessage(message) { outbound.push(message); }
     } },
+    iptvRpc(method, params) {
+      const id = `shared-${++sharedSequence}`;
+      outbound.push({ id, method, params });
+      return new Promise((resolve, reject) => sharedPending.set(id, { resolve, reject }));
+    },
     setTimeout() { return 1; },
     clearTimeout() {}
   };
   class MutationObserver { observe() {} }
   runInNewContext(script, { window, document, MutationObserver, Map, Promise, Error, Number, String, Math, Date, queueMicrotask });
-  const respond = (request, result, ok = true, error = null) => messageHandler({ data: { id: request.id, ok, result, error } });
+  const respond = (request, result, ok = true, error = null) => {
+    const response = { id: request.id, ok, result, error };
+    const pending = sharedPending.get(request.id);
+    if (pending) { sharedPending.delete(request.id); ok ? pending.resolve(result) : pending.reject(new Error(error || 'Opération impossible')); }
+    messageHandler({ data: response });
+  };
   return {
     content, rows, outbound, respond, messageHandler,
     async decorateSeries() {

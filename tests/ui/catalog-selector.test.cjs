@@ -19,8 +19,8 @@ test('Live selector is above the existing category filter and has no all-channel
 test('selector and rail both route through the same cancellable category load', () => {
   assert.match(app, /category-select'\)\.forEach\(select => select\.addEventListener\('change'[^]*selectCatalogCategory/);
   assert.match(app, /category-button[^]*selectCatalogCategory\(catalog, category\.id\)/);
-  assert.match(app, /rpc\('catalog\.live',[^]*'view'\)/);
-  assert.match(app, /model\.categoryId = categoryId;[^]*renderCatalogSelector\(catalog\)/);
+  assert.match(app, /rpc\('catalog\.live',[^]*'live-catalog'\)/);
+  assert.match(app, /model\.categoryId = categoryId;[^]*renderCatalogSelector\('live'\)/);
 });
 
 test('provider changes clear catalog models before the next selector load', () => {
@@ -44,8 +44,8 @@ test('Live entries use numeric id ordering with title fallback and display the i
   assert.match(app, /function compareLiveItems\(left, right\)/);
   assert.match(app, /Number\.MAX_SAFE_INTEGER/);
   assert.match(app, /localeCompare\(String\(right\.title/);
-  assert.match(app, /catalog === 'live' \? \[\.\.\.items\]\.sort\(compareLiveItems\) : items/);
-  assert.match(app, /`#\$\{item\.id\} · \$\{item\.title\}`/);
+  assert.match(app, /model\.liveItems = \[\.\.\.items\]\.sort\(compareLiveItems\)/);
+  assert.match(app, /`#\$\{item\.id\}`/);
 });
 
 test('provider diagnostic counts are explicitly labelled as category counts', () => {

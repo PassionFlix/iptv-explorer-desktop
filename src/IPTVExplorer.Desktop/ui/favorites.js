@@ -1,19 +1,14 @@
 (() => {
   'use strict';
 
-  let sequence = 0;
   let currentVod = null;
   let currentSeries = null;
   let cacheProvider = null;
   let activeTab = 'live';
-  const pending = new Map();
   const favorites = new Map();
 
   function rpc(method, params = {}) {
-    const id = `favorite-${Date.now()}-${++sequence}`;
-    const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-    window.chrome.webview.postMessage({ id, method, params });
-    return promise;
+    return window.iptvRpc(method, params);
   }
 
   function key(providerKey, mediaType, mediaId) {
@@ -113,13 +108,6 @@
 
   window.chrome.webview.addEventListener('message', event => {
     const response = event.data;
-    const request = pending.get(response?.id);
-    if (request) {
-      pending.delete(response.id);
-      response.ok ? request.resolve(response.result) : request.reject(new Error(response.error || 'Opération impossible'));
-      return;
-    }
-
     const result = response?.ok ? response.result : null;
     if (!result || typeof result !== 'object' || !('id' in result) || !('title' in result)) return;
     const selectedProvider = providerKey();
@@ -174,18 +162,16 @@
   }
 
   function parseLiveCard(card) {
-    const text = card.querySelector('strong')?.textContent || '';
-    const match = text.match(/^#(.+?)\s·\s(.+)$/);
-    if (!match) return null;
     const selectedProvider = providerKey();
-    if (!selectedProvider) return null;
+    const mediaId = card.dataset.mediaId || '';
+    if (!selectedProvider || !mediaId) return null;
     return {
       providerKey: selectedProvider,
       mediaType: 'live',
-      mediaId: match[1].trim(),
-      title: match[2].trim(),
+      mediaId,
+      title: card.dataset.title || card.querySelector('strong')?.textContent || 'Chaîne Live',
       imageUrl: card.querySelector('.channel-logo img')?.src || null,
-      categoryId: document.querySelector('#live .category-select')?.value || null
+      categoryId: card.dataset.categoryId || document.querySelector('#live .category-select')?.value || null
     };
   }
 
@@ -193,11 +179,10 @@
     document.querySelectorAll('#live .live-card').forEach(card => {
       if (card.querySelector('.favorite-live-toggle')) return;
       const reference = parseLiveCard(card);
-      const play = card.querySelector('button.play-small');
-      if (!reference || !play) return;
+      if (!reference) return;
       const star = favoriteButton(reference, true);
       star.classList.add('favorite-live-toggle');
-      play.before(star);
+      card.append(star);
     });
     syncFavoriteButtons();
   }
@@ -210,12 +195,9 @@
 
     const navButton = actionButton('Favoris', 'nav favorite-nav');
     navButton.innerHTML = '<span>★</span>Favoris';
+    navButton.dataset.page = 'favorites';
     navButton.addEventListener('click', async () => {
-      document.querySelectorAll('.nav,.page').forEach(element => element.classList.remove('active'));
-      navButton.classList.add('active');
-      document.querySelector('#favorites')?.classList.add('active');
-      const title = document.querySelector('#page-title');
-      if (title) title.textContent = 'Favoris';
+      window.iptvNavigate('favorites');
       await refreshFavoriteCache(true);
       renderFavoritesPage();
     });

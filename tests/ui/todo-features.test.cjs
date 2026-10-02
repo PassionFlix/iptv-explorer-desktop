@@ -9,18 +9,28 @@ const read = path => readFileSync(resolve(root, path), 'utf8');
 const mainWindow = read('src/IPTVExplorer.Desktop/MainWindow.xaml.cs');
 const favorites = read('src/IPTVExplorer.Desktop/ui/favorites.js');
 const favoritesCss = read('src/IPTVExplorer.Desktop/ui/favorites.css');
-const liveCompact = read('src/IPTVExplorer.Desktop/ui/live-compact.js');
-const liveCompactCss = read('src/IPTVExplorer.Desktop/ui/live-compact.css');
+const app = read('src/IPTVExplorer.Desktop/ui/app.js');
+const appCss = read('src/IPTVExplorer.Desktop/ui/app.css');
 const nativeActions = read('src/IPTVExplorer.Desktop/ui/provider-native-actions.js');
 const localStats = read('src/IPTVExplorer.Desktop/ui/diagnostic-local-stats.js');
-const hierarchy = read('src/IPTVExplorer.Desktop/ui/category-hierarchy.js');
-const hierarchyCss = read('src/IPTVExplorer.Desktop/ui/category-hierarchy.css');
 
-test('desktop injects all local TODO enhancers before navigating the WebView', () => {
-  for (const script of ['favorites.js', 'live-compact.js', 'provider-native-actions.js', 'diagnostic-local-stats.js', 'category-hierarchy.js']) {
+test('desktop injects auxiliary enhancers but keeps Live and category ownership in app.js', () => {
+  for (const script of ['favorites.js', 'provider-native-actions.js', 'diagnostic-local-stats.js']) {
     assert.match(mainWindow, new RegExp(script.replace('.', '\\.')));
   }
+  assert.doesNotMatch(mainWindow, /live-compact\.js/);
+  assert.doesNotMatch(mainWindow, /category-hierarchy\.js/);
+  assert.match(app, /function selectLiveCategory/);
+  assert.match(app, /function categoryDepths/);
   assert.match(mainWindow, /Navigate\("https:\/\/appassets\.local\/index\.html"\)/);
+});
+
+test('all injected helpers delegate to the single app.js RPC transport', () => {
+  assert.match(app, /window\.iptvRpc = rpc/);
+  for (const source of [favorites, nativeActions, localStats, read('src/IPTVExplorer.Desktop/ui/media-actions.js')]) {
+    assert.match(source, /window\.iptvRpc\(method, params\)/);
+    assert.doesNotMatch(source, /new Map\(\)[^]*postMessage\(\{ id, method, params \}\)/);
+  }
 });
 
 test('favorites stay local, provider scoped, and expose Live Films Series tabs', () => {
@@ -37,13 +47,12 @@ test('favorites stay local, provider scoped, and expose Live Films Series tabs',
   assert.match(favoritesCss, /\.favorite-toggle/);
 });
 
-test('compact Live rows reuse the existing play action for click and keyboard', () => {
-  assert.match(liveCompact, /play\.click\(\)/);
-  assert.match(liveCompact, /event\.key !== 'Enter'/);
-  assert.match(liveCompact, /event\.key !== ' '/);
-  assert.match(liveCompact, /event\.target\.closest\('button'\)/);
-  assert.match(liveCompactCss, /#live \.live-grid\{display:flex;flex-direction:column/);
-  assert.match(liveCompactCss, /min-height:54px/);
+test('compact Live rows are keyboard playable and windowed inside app.js', () => {
+  assert.match(app, /event\.key !== 'Enter'/);
+  assert.match(app, /event\.key !== ' '/);
+  assert.match(app, /event\.target\.closest\('button'\)/);
+  assert.match(app, /windowSize = 80/);
+  assert.match(appCss, /#live \.live-card\{[^}]*height:52px/);
 });
 
 test('full Stalker MAC action stays native and never reads the secret in JavaScript', () => {
@@ -66,11 +75,9 @@ test('diagnostic content counts use local stats only and explain Stalker limits'
 });
 
 test('category hierarchy uses persisted parent ids without title heuristics', () => {
-  assert.match(hierarchy, /rpc\('categories\.hierarchy'/);
-  assert.match(hierarchy, /category\?\.parentId/);
-  assert.match(hierarchy, /Sous-catégorie de/);
-  assert.match(hierarchy, /trail\.has\(id\)/);
-  assert.match(hierarchyCss, /data-category-depth="1"/);
-  assert.doesNotMatch(hierarchy, /split\([^]*category\.name/);
-  assert.doesNotMatch(hierarchy, /includes\([^]*category\.name/);
+  assert.match(app, /category\?\.parentId/);
+  assert.match(app, /trail\.has\(id\)/);
+  assert.match(app, /hierarchyCategories: data\.categories/);
+  assert.match(appCss, /data-category-depth="1"/);
+  assert.doesNotMatch(app, /split\([^]*category\.name/);
 });

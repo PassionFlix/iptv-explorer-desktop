@@ -22,6 +22,7 @@
     window.chrome.webview.postMessage({ id, method, params });
     return promise;
   }
+  window.iptvRpc = rpc;
   function cancelGroup(group) {
     const id = groups.get(group);
     if (id) rawPost('app.cancel', { requestId: id });
@@ -137,18 +138,21 @@
     catch (error) { toast(error.message, true); }
   });
 
-  const titles = { home: 'Accueil', live: 'Live', vod: 'Films', series: 'Séries', search: 'Recherche', settings: 'Paramètres' };
+  const titles = { home: 'Accueil', live: 'Live', vod: 'Films', series: 'Séries', search: 'Recherche', settings: 'Paramètres', favorites: 'Favoris' };
   function navigate(page) {
     cancelGroup('view'); cancelGroup('detail'); cancelGroup('home-content');
+    if (page !== 'live') cancelGroup('live-catalog');
     state.page = page;
     window.iptvHome.setActive(page === 'home');
     $$('.nav,.page').forEach(element => element.classList.remove('active'));
     $(`.nav[data-page="${page}"]`).classList.add('active');
     $(`#${page}`).classList.add('active'); $('#page-title').textContent = titles[page];
+    rpc('player.liveSurface', { visible: page === 'live' }, 'live-surface').catch(error => { if (!isAbort(error)) console.warn('Native Live surface unavailable.'); });
     if (page === 'home') renderHome();
     if (['live', 'vod', 'series'].includes(page)) loadCatalogShell(page);
     if (page === 'settings') { renderProviderSettings(); loadPreferences(); }
   }
+  window.iptvNavigate = navigate;
   $$('.nav').forEach(element => element.addEventListener('click', () => navigate(element.dataset.page)));
   $$('[data-home-page]').forEach(element => element.addEventListener('click', () => navigate(element.dataset.homePage)));
   $('#home-search-form').addEventListener('submit', event => {
@@ -252,40 +256,60 @@
   async function loadCatalogShell(catalog) {
     const section = $(`#${catalog}`), list = section.querySelector('.category-list'); list.replaceChildren();
     section.querySelector('.catalog-grid').replaceChildren(); section.querySelector('.empty-catalog').classList.remove('hidden');
+    section.querySelector('.empty-catalog').textContent = `Sélectionnez une catégorie ${catalog === 'live' ? 'Live' : catalog === 'vod' ? 'Films' : 'Séries'}.`;
     const categorySelect = section.querySelector('.category-select'); if (categorySelect) categorySelect.replaceChildren(Object.assign(node('option', '', 'Sélectionner une catégorie'), { value: '' }));
+    if (catalog === 'live') resetLiveChannels();
     if (!state.activeProviderKey) { section.querySelector('.empty-catalog').textContent = 'Aucun fournisseur actif.'; return; }
     try {
       const data = await rpc('categories.list', { providerKey: state.activeProviderKey, catalogType: catalog }, 'view');
       const selected = data.categories.filter(category => category.selected && category.present);
-      state.catalogs.set(catalog, { categories: selected, categoryId: null, page: 1, totalPages: 1 });
+      state.catalogs.set(catalog, { categories: selected, hierarchyCategories: data.categories, categoryId: null, page: 1, totalPages: 1, requestVersion: 0, loadingKey: null, loadingPromise: null, liveItems: [], filteredLiveItems: [], liveRenderFrame: 0 });
       renderCatalogSelector(catalog);
       renderCatalogCategories(catalog, '');
-      if (selected.length) selectCatalogCategory(catalog, selected[0].id);
+      if (selected.length && catalog !== 'live') selectCatalogCategory(catalog, selected[0].id);
       else section.querySelector('.empty-catalog').textContent = 'Aucune catégorie sélectionnée.';
+      if (selected.length && catalog === 'live') section.querySelector('.empty-catalog').textContent = 'Sélectionnez une catégorie Live.';
     } catch (error) { if (!isAbort(error)) toast(error.message, true); }
   }
+  function categoryDepths(categories) {
+    const byId = new Map(categories.map(category => [String(category.id), category])), depths = new Map();
+    function depth(id, trail = new Set()) {
+      if (depths.has(id)) return depths.get(id);
+      const category = byId.get(id), parent = category?.parentId == null ? '' : String(category.parentId);
+      if (!parent || !byId.has(parent) || trail.has(id)) { depths.set(id, 0); return 0; }
+      const next = new Set(trail); next.add(id);
+      const value = Math.min(4, depth(parent, next) + 1); depths.set(id, value); return value;
+    }
+    categories.forEach(category => depth(String(category.id)));
+    return depths;
+  }
+  function categoryLabel(category, depth) { return `${depth ? `${'↳ '.repeat(Math.min(depth, 2))}` : ''}${decodeHtmlEntities(category.name)}`; }
   function renderCatalogSelector(catalog) {
     const select = $(`#${catalog} .category-select`), model = state.catalogs.get(catalog); if (!select || !model) return;
     const placeholder = node('option', '', 'Sélectionner une catégorie'); placeholder.value = ''; select.replaceChildren(placeholder);
-    model.categories.forEach(category => { const option = node('option', '', decodeHtmlEntities(category.name)); option.value = category.id; option.selected = category.id === model.categoryId; select.append(option); });
+    const depths = categoryDepths(model.hierarchyCategories || model.categories);
+    model.categories.forEach(category => { const depth = depths.get(String(category.id)) || 0, option = node('option', '', categoryLabel(category, depth)); option.value = category.id; option.selected = category.id === model.categoryId; option.dataset.depth = String(depth); select.append(option); });
   }
   function renderCatalogCategories(catalog, filter) {
     const model = state.catalogs.get(catalog), container = $(`#${catalog} .category-list`); container.replaceChildren();
     const query = filter.trim().toLocaleLowerCase();
-    model.categories.filter(category => !query || category.name.toLocaleLowerCase().includes(query)).slice(0, 200).forEach(category => {
-      const item = button(decodeHtmlEntities(category.name), `category-button${model.categoryId === category.id ? ' active' : ''}`, () => selectCatalogCategory(catalog, category.id)); container.append(item);
+    const depths = categoryDepths(model.hierarchyCategories || model.categories);
+    model.categories.filter(category => !query || category.name.toLocaleLowerCase().includes(query)).forEach(category => {
+      const depth = depths.get(String(category.id)) || 0;
+      const item = button(categoryLabel(category, depth), `category-button${model.categoryId === category.id ? ' active' : ''}`, () => selectCatalogCategory(catalog, category.id));
+      item.dataset.categoryDepth = String(depth); item.dataset.categoryId = String(category.id); container.append(item);
     });
   }
   $$('.catalog-page .category-filter').forEach(input => input.addEventListener('input', () => renderCatalogCategories(input.closest('.catalog-page').dataset.catalog, input.value)));
   $$('.catalog-page .category-select').forEach(select => select.addEventListener('change', () => { if (select.value) selectCatalogCategory(select.closest('.catalog-page').dataset.catalog, select.value); }));
   async function selectCatalogCategory(catalog, categoryId, page = 1) {
+    if (catalog === 'live') return selectLiveCategory(categoryId);
     const model = state.catalogs.get(catalog); if (!model) return; model.categoryId = categoryId; model.page = page; renderCatalogSelector(catalog); renderCatalogCategories(catalog, $(`#${catalog} .category-filter`).value);
     const section = $(`#${catalog}`), grid = section.querySelector('.catalog-grid'), empty = section.querySelector('.empty-catalog'), loading = section.querySelector('.loading-state');
     grid.replaceChildren(); empty.classList.add('hidden'); loading.classList.remove('hidden');
     try {
       let result;
-      if (catalog === 'live') result = { items: await rpc('catalog.live', { providerKey: state.activeProviderKey, categoryId }, 'view'), page: 1, totalPages: 1, total: 0 };
-      else result = await rpc(`catalog.${catalog}.page`, { providerKey: state.activeProviderKey, categoryId, page }, 'view');
+      result = await rpc(`catalog.${catalog}.page`, { providerKey: state.activeProviderKey, categoryId, page }, 'view');
       model.totalPages = result.totalPages || 1; renderCatalogItems(catalog, result.items);
       const pager = section.querySelector('.pager');
       if (pager) { pager.classList.toggle('hidden', model.totalPages <= 1); pager.querySelector('.page-info').textContent = `Page ${result.page} / ${model.totalPages} · ${result.total} éléments`; pager.querySelector('.previous-page').disabled = result.page <= 1; pager.querySelector('.next-page').disabled = result.page >= model.totalPages; }
@@ -307,16 +331,74 @@
     if (leftNumber !== rightNumber) return leftNumber - rightNumber;
     return String(left.title || '').localeCompare(String(right.title || ''), 'fr', { numeric: true, sensitivity: 'base' });
   }
+  function resetLiveChannels() {
+    const filter = $('#live-channel-filter'), count = $('#live-channel-count');
+    if (filter) { filter.value = ''; filter.disabled = true; }
+    if (count) count.textContent = 'Aucune catégorie';
+  }
+  async function selectLiveCategory(categoryId) {
+    const model = state.catalogs.get('live'); if (!model) return;
+    const providerKey = state.activeProviderKey, requestKey = `${providerKey}\u0000${categoryId}`;
+    if (model.loadingKey === requestKey && model.loadingPromise) return model.loadingPromise;
+    model.categoryId = categoryId; model.page = 1; renderCatalogSelector('live'); renderCatalogCategories('live', $('#live .category-filter').value);
+    const section = $('#live'), grid = section.querySelector('.live-grid'), empty = section.querySelector('.empty-catalog'), loading = section.querySelector('.loading-state');
+    model.requestVersion += 1; const requestVersion = model.requestVersion;
+    model.liveItems = []; model.filteredLiveItems = []; grid.replaceChildren(); empty.classList.add('hidden'); loading.classList.remove('hidden');
+    const filter = $('#live-channel-filter'); filter.disabled = true; filter.value = '';
+    $('#live-channel-count').textContent = 'Chargement…';
+    const operation = rpc('catalog.live', { providerKey, categoryId }, 'live-catalog');
+    model.loadingKey = requestKey; model.loadingPromise = operation;
+    try {
+      const items = await operation;
+      if (state.page !== 'live' || state.activeProviderKey !== providerKey || model.requestVersion !== requestVersion || model.categoryId !== categoryId) return;
+      model.liveItems = [...items].sort(compareLiveItems); model.filteredLiveItems = model.liveItems; filter.disabled = false;
+      renderLiveItems(model);
+      if (!items.length) { empty.textContent = 'Aucune chaîne dans cette catégorie.'; empty.classList.remove('hidden'); }
+    } catch (error) {
+      if (!isAbort(error) && model.requestVersion === requestVersion) { empty.textContent = error.message; empty.classList.remove('hidden'); }
+    } finally {
+      if (model.requestVersion === requestVersion) loading.classList.add('hidden');
+      if (model.loadingKey === requestKey) { model.loadingKey = null; model.loadingPromise = null; }
+    }
+  }
+  function renderLiveItems(model) {
+    const filter = $('#live-channel-filter').value.trim().toLocaleLowerCase();
+    model.filteredLiveItems = model.liveItems.filter(item => !filter || String(item.id).toLocaleLowerCase().includes(filter) || String(item.title || '').toLocaleLowerCase().includes(filter));
+    const count = model.filteredLiveItems.length;
+    $('#live-channel-count').textContent = `${count} chaîne${count === 1 ? '' : 's'}`;
+    const grid = $('#live .live-grid'); grid.scrollTop = 0; queueLiveWindow(model);
+  }
+  function queueLiveWindow(model) {
+    if (model.liveRenderFrame) cancelAnimationFrame(model.liveRenderFrame);
+    model.liveRenderFrame = requestAnimationFrame(() => { model.liveRenderFrame = 0; renderLiveWindow(model); });
+  }
+  function renderLiveWindow(model) {
+    const grid = $('#live .live-grid'); if (!grid || state.catalogs.get('live') !== model) return;
+    const rowHeight = 58, windowSize = 80, overscan = 10;
+    const start = Math.max(0, Math.floor(grid.scrollTop / rowHeight) - overscan), end = Math.min(model.filteredLiveItems.length, start + windowSize);
+    const fragment = document.createDocumentFragment();
+    const top = node('div', 'live-virtual-spacer'); top.style.height = `${start * rowHeight}px`; fragment.append(top);
+    for (let index = start; index < end; index++) fragment.append(createLiveRow(model.filteredLiveItems[index], model));
+    const bottom = node('div', 'live-virtual-spacer'); bottom.style.height = `${Math.max(0, model.filteredLiveItems.length - end) * rowHeight}px`; fragment.append(bottom);
+    grid.replaceChildren(fragment);
+  }
+  function createLiveRow(item, model) {
+    const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: 'live', mediaId: item.id, extension: item.extension, categoryId: item.categoryId || model.categoryId });
+    const card = node('article', 'media-card live-card live-row'); card.tabIndex = 0; card.setAttribute('role', 'button'); card.dataset.mediaId = String(item.id); card.dataset.title = String(item.title || ''); card.dataset.categoryId = String(reference.categoryId || '');
+    const visual = imageOrPlaceholder(item.imageUrl, item.title, 'channel-logo');
+    const copy = node('span', 'live-channel-copy'); copy.append(node('small', 'live-channel-id', `#${item.id}`), node('strong', '', item.title));
+    const play = () => openPlayer(reference, item.title);
+    card.addEventListener('click', event => { if (!event.target.closest('button')) play(); });
+    card.addEventListener('keydown', event => { if (event.target.closest('button') || (event.key !== 'Enter' && event.key !== ' ')) return; event.preventDefault(); play(); });
+    card.append(visual, copy); return card;
+  }
+  $('#live-channel-filter').addEventListener('input', () => { const model = state.catalogs.get('live'); if (model) renderLiveItems(model); });
+  $('#live .live-grid').addEventListener('scroll', () => { const model = state.catalogs.get('live'); if (model) queueLiveWindow(model); }, { passive: true });
   function renderCatalogItems(catalog, items) {
     const grid = $(`#${catalog} .catalog-grid`), providerKey = state.activeProviderKey; grid.replaceChildren();
-    const renderedItems = catalog === 'live' ? [...items].sort(compareLiveItems) : items;
+    const renderedItems = items;
     renderedItems.forEach(item => {
       const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id, extension: item.extension, categoryId: item.categoryId });
-      if (catalog === 'live') {
-        const card = node('article', 'media-card live-card'); const visual = imageOrPlaceholder(item.imageUrl, item.title, 'channel-logo');
-        const title = node('strong', '', `#${item.id} · ${item.title}`); const play = button('Lire', 'play-small', event => { event.stopPropagation(); openPlayer(reference, item.title); });
-        card.append(visual, title, play); grid.append(card); return;
-      }
       const card = node('article', 'media-card'); card.append(imageOrPlaceholder(item.imageUrl, item.title));
       const copy = node('div', 'media-copy'); copy.append(node('strong', '', item.title), node('small', '', [item.year, item.rating ? `★ ${item.rating}` : null].filter(Boolean).join(' · ') || 'Détails')); card.append(copy);
       card.addEventListener('click', () => openDetail(catalog, item, reference)); grid.append(card);
@@ -356,7 +438,10 @@
     parent.append(section);
   }
   async function openPlayer(reference, title) {
-    try { await rpc('player.open', reference, 'player'); }
+    const payload = reference.mediaType === 'live'
+      ? { providerKey: reference.providerKey, mediaType: 'live', mediaId: reference.mediaId, categoryId: reference.categoryId, ...(reference.extension ? { extension: reference.extension } : {}) }
+      : reference;
+    try { await rpc('player.open', payload, 'player'); }
     catch (error) { if (!isAbort(error)) toast(error.message, true); }
   }
 
