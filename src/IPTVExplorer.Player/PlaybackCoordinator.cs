@@ -23,6 +23,9 @@ public interface IPlayerWindowManager
 {
     Task<nint> ShowAsync(CancellationToken cancellationToken = default);
 
+    Task<nint> ShowAsync(MediaReference reference, CancellationToken cancellationToken = default) =>
+        ShowAsync(cancellationToken);
+
     void ConfigureEpisodes(
         PlayerSeriesContext? context,
         Func<PlayerEpisodeOption, CancellationToken, Task>? selectionHandler)
@@ -106,7 +109,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         var provider = await _providers.GetAsync(reference.ProviderKey, cancellationToken) ?? throw new KeyNotFoundException("Provider was not found.");
         if (!provider.Enabled) throw new InvalidOperationException("Enable this provider before playback.");
 
-        var renderHostHandle = await _windows.ShowAsync(cancellationToken);
+        var renderHostHandle = await _windows.ShowAsync(reference, cancellationToken);
         if (renderHostHandle == 0) throw new InvalidOperationException("The native video surface is unavailable.");
 
         var client = await _clients.CreateAsync(provider, cancellationToken);
