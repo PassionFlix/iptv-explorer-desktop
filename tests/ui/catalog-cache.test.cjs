@@ -17,7 +17,15 @@ function fixture(functions) {
   const context = {
     state, catalogSessions: new Set(), catalogRefreshBusy: false, completedIndex: null,
     activeProvider: () => providers.find(p => p.key === state.activeProviderKey),
-    $: selector => { if (!elements.has(selector)) elements.set(selector, { textContent: '', disabled: false }); return elements.get(selector); },
+    $: selector => {
+      if (!elements.has(selector)) {
+        elements.set(selector, {
+          textContent: '', disabled: false,
+          classList: { toggle() {}, add() {}, remove() {} }
+        });
+      }
+      return elements.get(selector);
+    },
     rpc: async (method, params) => { calls.push({ method, params }); return method === 'app.getState' ? state.app : {}; },
     renderProviderSelector() {}, renderProviderSettings() {}, navigate() {},
     renderHome: async () => rendered.push('home'), renderHomeMedia: () => rendered.push('media'),
