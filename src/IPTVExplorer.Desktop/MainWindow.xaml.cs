@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
 using IPTVExplorer.Player;
@@ -24,11 +26,14 @@ public partial class MainWindow : Window
     private readonly CatalogStatsBridge _catalogStats;
     private readonly IPlayerService _player;
     private readonly TrueFullscreenBehavior _liveFullscreenBehavior;
+    private readonly DispatcherTimer _liveControlsHideTimer;
+    private readonly DispatcherTimer _liveFullscreenPointerTimer;
     private readonly TaskCompletionSource<nint> _liveRenderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private PlayerState _liveState = PlayerState.Idle;
     private bool _liveSoftStopped;
     private bool _liveSurfaceActive;
     private bool _updatingLiveTracks;
+    private Point? _lastLiveFullscreenPointerScreen;
     private double _liveSurfaceTop = 100;
 
     public MainWindow(
@@ -47,7 +52,12 @@ public partial class MainWindow : Window
         _player = player;
         InitializeComponent();
         _liveFullscreenBehavior = new(this);
+        _liveControlsHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _liveControlsHideTimer.Tick += OnLiveControlsHideTimerTick;
+        _liveFullscreenPointerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        _liveFullscreenPointerTimer.Tick += OnLiveFullscreenPointerTimerTick;
         LiveVideoHost.HandleReady += OnLiveHandleReady;
+        LiveVideoHost.PointerMoved += OnLiveVideoPointerMoved;
         _player.StateChanged += OnLivePlayerStateChanged;
         _player.TrackListChanged += OnLiveTrackListChanged;
         Loaded += FitWindowToWorkArea;
@@ -210,6 +220,8 @@ public partial class MainWindow : Window
         LiveStatusText.Text = "Chargement…";
         LivePlayPauseButton.Content = "Pause";
 
+        LiveFullscreenPlayPauseButton.Content = "Pause";
+
         if (LiveVideoHost.NativeHandle != 0) _liveRenderHandle.TrySetResult(LiveVideoHost.NativeHandle);
         return await _liveRenderHandle.Task.WaitAsync(cancellationToken);
     }
@@ -246,6 +258,8 @@ public partial class MainWindow : Window
         LivePlayerTitle.Text = "Sélectionnez une chaîne";
         LiveStatusText.Text = "Prêt";
         LivePlayPauseButton.Content = "Pause";
+
+        LiveFullscreenPlayPauseButton.Content = "Pause";
         LiveAudioTracks.ItemsSource = null;
         LiveSubtitleTracks.ItemsSource = null;
     }
@@ -261,7 +275,11 @@ public partial class MainWindow : Window
         if (e.State is PlayerState.Loading or PlayerState.Playing) _liveSoftStopped = false;
         var state = _liveSoftStopped && e.State == PlayerState.Paused ? PlayerState.Stopped : e.State;
         _liveState = state;
-        LivePlayPauseButton.Content = state is PlayerState.Paused or PlayerState.Stopped ? "Lecture" : "Pause";
+        var playPauseText = state is PlayerState.Paused or PlayerState.Stopped ? "Lecture" : "Pause";
+
+        LivePlayPauseButton.Content = playPauseText;
+
+        LiveFullscreenPlayPauseButton.Content = playPauseText;
         LiveStatusText.Text = e.SafeMessage ?? state switch
         {
             PlayerState.Loading => "Chargement…",
@@ -314,6 +332,7 @@ public partial class MainWindow : Window
         _player.Stop();
         _liveState = PlayerState.Stopped;
         LivePlayPauseButton.Content = "Lecture";
+        LiveFullscreenPlayPauseButton.Content = "Lecture";
         LiveStatusText.Text = "Arrêté";
     }
 
@@ -340,31 +359,110 @@ public partial class MainWindow : Window
     private void SetLiveFullscreen(bool fullscreen)
     {
         if (!_liveSurfaceActive || _liveFullscreenBehavior.IsFullscreen == fullscreen) return;
+        var changed = fullscreen ? _liveFullscreenBehavior.Enter() : _liveFullscreenBehavior.Exit();
+        if (!changed)
+        {
+            LiveStatusText.Text = fullscreen ? "Impossible d’activer le plein écran" : "Impossible de quitter le plein écran";
+            return;
+        }
+
         if (fullscreen)
         {
-            if (!_liveFullscreenBehavior.Enter())
-            {
-                LiveStatusText.Text = "Impossible d’activer le plein écran";
-                return;
-            }
             BrowserHost.Visibility = Visibility.Collapsed;
             BrowserColumn.Width = new GridLength(0);
             LivePlayerColumn.Width = new GridLength(1, GridUnitType.Star);
             LivePlayerPane.BorderThickness = new Thickness(0);
             LivePlayerPane.Margin = new Thickness(0);
+            LivePlayerLayout.Margin = new Thickness(0);
+            LiveHeaderPanel.Visibility = Visibility.Collapsed;
+            LiveControlsPanel.Visibility = Visibility.Collapsed;
+            LiveTracksPanel.Visibility = Visibility.Collapsed;
+            LiveStatusBadge.Visibility = Visibility.Collapsed;
+            LiveVideoFrame.BorderThickness = new Thickness(0);
+            LiveVideoFrame.CornerRadius = new CornerRadius(0);
             LiveFullscreenButton.Content = "Quitter";
+            _lastLiveFullscreenPointerScreen = null;
+            _liveFullscreenPointerTimer.Start();
+            ShowLiveFullscreenControls();
         }
         else
         {
+            _liveControlsHideTimer.Stop();
+            _liveFullscreenPointerTimer.Stop();
+            _lastLiveFullscreenPointerScreen = null;
+            LiveFullscreenControlsPopup.IsOpen = false;
+            RestoreLiveCursor();
             BrowserHost.Visibility = Visibility.Visible;
             BrowserColumn.Width = new GridLength(LiveBrowserWidth);
             LivePlayerColumn.Width = new GridLength(1, GridUnitType.Star);
             LivePlayerPane.BorderThickness = new Thickness(1, 0, 0, 0);
             LivePlayerPane.Margin = new Thickness(0, _liveSurfaceTop, 0, 0);
-            _ = _liveFullscreenBehavior.Exit();
+            LivePlayerLayout.Margin = new Thickness(12);
+            LiveHeaderPanel.Visibility = Visibility.Visible;
+            LiveControlsPanel.Visibility = Visibility.Visible;
+            LiveTracksPanel.Visibility = Visibility.Visible;
+            LiveStatusBadge.Visibility = Visibility.Visible;
+            LiveVideoFrame.BorderThickness = new Thickness(1);
+            LiveVideoFrame.CornerRadius = new CornerRadius(8);
             LiveFullscreenButton.Content = "Plein écran";
         }
         _player.SetFullscreen(fullscreen);
+    }
+
+    private void ShowLiveFullscreenControls()
+    {
+        if (!_liveFullscreenBehavior.IsFullscreen) return;
+        LiveFullscreenControlsPopup.Width = Math.Max(320, LivePlayerPane.ActualWidth - 36);
+        LiveFullscreenControlsPopup.IsOpen = true;
+        RestoreLiveCursor();
+        _liveControlsHideTimer.Stop();
+        _liveControlsHideTimer.Start();
+    }
+
+    private void OnLiveControlsHideTimerTick(object? sender, EventArgs e)
+    {
+        _liveControlsHideTimer.Stop();
+        if (!_liveFullscreenBehavior.IsFullscreen) return;
+        if (Mouse.LeftButton == MouseButtonState.Pressed || Mouse.Captured is not null)
+        {
+            _liveControlsHideTimer.Start();
+            return;
+        }
+
+        LiveFullscreenControlsPopup.IsOpen = false;
+        Cursor = Cursors.None;
+        LiveVideoHost.SetCursorHidden(true);
+    }
+
+    private void OnLiveFullscreenPointerTimerTick(object? sender, EventArgs e)
+    {
+        if (!_liveFullscreenBehavior.IsFullscreen)
+        {
+            _liveFullscreenPointerTimer.Stop();
+            _lastLiveFullscreenPointerScreen = null;
+            return;
+        }
+
+        if (!GetCursorPos(out var nativePoint)) return;
+        var screenPoint = new Point(nativePoint.X, nativePoint.Y);
+        if (_lastLiveFullscreenPointerScreen is Point previous && previous == screenPoint) return;
+        _lastLiveFullscreenPointerScreen = screenPoint;
+
+        if (PresentationSource.FromVisual(this) is null) return;
+        var clientPoint = PointFromScreen(screenPoint);
+        if (clientPoint.X < 0 || clientPoint.Y < 0 || clientPoint.X > ActualWidth || clientPoint.Y > ActualHeight) return;
+
+        ShowLiveFullscreenControls();
+    }
+
+    private void OnLiveVideoPointerMoved(object? sender, EventArgs e) => ShowLiveFullscreenControls();
+    private void OnLiveFullscreenControlsPointerMoved(object sender, MouseEventArgs e) => ShowLiveFullscreenControls();
+    private void OnLiveFullscreenControlsInteracted(object sender, MouseButtonEventArgs e) => ShowLiveFullscreenControls();
+
+    private void RestoreLiveCursor()
+    {
+        Cursor = null;
+        LiveVideoHost.SetCursorHidden(false);
     }
 
     private void OnMainWindowPreviewKeyDown(object sender, KeyEventArgs e)
@@ -389,9 +487,26 @@ public partial class MainWindow : Window
 
     private void OnMainWindowClosed(object? sender, EventArgs e)
     {
+        _liveControlsHideTimer.Stop();
+        _liveFullscreenPointerTimer.Stop();
+        _lastLiveFullscreenPointerScreen = null;
+        LiveFullscreenControlsPopup.IsOpen = false;
+        RestoreLiveCursor();
         LiveVideoHost.HandleReady -= OnLiveHandleReady;
+        LiveVideoHost.PointerMoved -= OnLiveVideoPointerMoved;
         _player.StateChanged -= OnLivePlayerStateChanged;
         _player.TrackListChanged -= OnLiveTrackListChanged;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
     }
 
     private static string CleanLiveTitle(string? value)

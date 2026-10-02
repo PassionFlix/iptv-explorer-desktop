@@ -39,3 +39,16 @@ test('the singleton libmpv engine backs both native surfaces and fullscreen stay
   assert.match(main, /_player\.SetFullscreen\(fullscreen\)/);
   assert.doesNotMatch(main, /Process\.Start\([^)]*(?:mpv|vlc)/i);
 });
+
+test('Live fullscreen is video-first and restores the embedded layout on exit', () => {
+  for (const name of ['LiveHeaderPanel', 'LiveControlsPanel', 'LiveTracksPanel', 'LiveStatusBadge', 'LiveVideoFrame', 'LiveFullscreenControlsPopup']) {
+    assert.match(xaml, new RegExp(`x:Name="${name}"`));
+  }
+  assert.match(main, /LiveHeaderPanel\.Visibility = Visibility\.Collapsed/);
+  assert.match(main, /LiveControlsPanel\.Visibility = Visibility\.Collapsed/);
+  assert.match(main, /LiveTracksPanel\.Visibility = Visibility\.Collapsed/);
+  assert.match(main, /LiveVideoFrame\.CornerRadius = new CornerRadius\(0\)/);
+  assert.match(main, /LiveFullscreenControlsPopup\.IsOpen = true/);
+  assert.match(main, /LiveHeaderPanel\.Visibility = Visibility\.Visible/);
+  assert.match(main, /LivePlayerPane\.Margin = new Thickness\(0, _liveSurfaceTop, 0, 0\)/);
+});
