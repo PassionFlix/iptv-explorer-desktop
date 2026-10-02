@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using IPTVExplorer.Core;
 using IPTVExplorer.Desktop;
@@ -11,7 +12,7 @@ public sealed class ProviderSecretBridgeTests
     public async Task StalkerMacIsShownOnlyThroughNativePresenter()
     {
         await using var database = await TestDatabase.CreateAsync();
-        var secrets = new InMemorySecretStore();
+        var secrets = new RecordingSecretStore();
         const string mac = "00:11:22:33:44:55";
         var reference = await secrets.PutAsync(new ProviderSecret(MacAddress: mac));
         var provider = await database.AddProviderAsync(ProviderType.Stalker, reference);
@@ -39,7 +40,7 @@ public sealed class ProviderSecretBridgeTests
     public async Task XtreamProviderCannotExposeNativeMacAction()
     {
         await using var database = await TestDatabase.CreateAsync();
-        var secrets = new InMemorySecretStore();
+        var secrets = new RecordingSecretStore();
         var reference = await secrets.PutAsync(new ProviderSecret("fixture-user", "fixture-password"));
         var provider = await database.AddProviderAsync(ProviderType.Xtream, reference);
         var presenter = new RecordingPresenter();
@@ -65,7 +66,7 @@ public sealed class ProviderSecretBridgeTests
     public async Task UnrelatedBridgeMethodIsIgnored()
     {
         await using var database = await TestDatabase.CreateAsync();
-        var bridge = new ProviderSecretBridge(database.Repository, new InMemorySecretStore(), new RecordingPresenter(), NullLogger<ProviderSecretBridge>.Instance);
+        var bridge = new ProviderSecretBridge(database.Repository, new RecordingSecretStore(), new RecordingPresenter(), NullLogger<ProviderSecretBridge>.Instance);
         Assert.Null(await bridge.TryHandleAsync("""{"id":"x","method":"app.getState","params":{}}"""));
     }
 
@@ -79,6 +80,33 @@ public sealed class ProviderSecretBridgeTests
             cancellationToken.ThrowIfCancellationRequested();
             ProviderName = providerName;
             MacAddress = macAddress;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingSecretStore : ISecretStore
+    {
+        private readonly ConcurrentDictionary<string, ProviderSecret> _values = new(StringComparer.Ordinal);
+
+        public Task<string> PutAsync(ProviderSecret secret, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = $"secret-{Guid.NewGuid():N}";
+            _values[key] = secret;
+            return Task.FromResult(key);
+        }
+
+        public Task<ProviderSecret?> GetAsync(string reference, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _values.TryGetValue(reference, out var secret);
+            return Task.FromResult(secret);
+        }
+
+        public Task DeleteAsync(string reference, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _values.TryRemove(reference, out _);
             return Task.CompletedTask;
         }
     }
