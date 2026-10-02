@@ -69,36 +69,46 @@
     try { await applyCatalogRefresh(provider.key, await rpc('catalog.session', { providerKey: provider.key })); }
     catch { if (state.activeProviderKey === provider.key) $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
   }
-  async function loadCatalogStatus() {
+  async function loadCatalogStatus(preserveState = false) {
     const provider = activeProvider();
-    $('#refresh-catalog').disabled = catalogRefreshBusy || !provider || provider.type !== 'xtream';
-    if (!provider || provider.type !== 'xtream') { $('#catalog-refreshed-at').textContent = 'Actualisation bulk réservée à Xtream.'; return; }
+    const stalker = provider?.type === 'stalker';
+    $('#refresh-catalog').disabled = catalogRefreshBusy || !provider;
+    $('#refresh-catalog').textContent = stalker ? 'Actualiser le Live' : 'Actualiser le catalogue';
+    $('#catalog-snapshot-kind').textContent = stalker ? 'LIVE STALKER' : 'CATALOGUE XTREAM';
+    if (!provider) { $('#catalog-refreshed-at').textContent = 'Aucun fournisseur actif.'; return; }
     try {
       const status = await rpc('catalog.status', { providerKey: provider.key });
       if (state.activeProviderKey !== provider.key) return;
-      $('#catalog-refreshed-at').textContent = `Dernière actualisation : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
+      $('#catalog-refreshed-at').textContent = `${stalker ? 'Dernière actualisation Live' : 'Dernière actualisation'} : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
+      if (!preserveState) $('#catalog-refresh-state').textContent = stalker
+          ? 'Navigation Live locale. Cache valide 6 heures ; aucune analyse catégorie par catégorie.'
+          : 'Navigation locale. Actualisation automatique au plus une fois par session, avec un délai de 30 minutes.';
     } catch { /* Local status only; no network fallback. */ }
   }
   async function applyCatalogRefresh(providerKey, result) {
     if (state.activeProviderKey !== providerKey) return;
     const labels = { updated: 'Catalogue actualisé. Indexation locale en cours.', updatedIndexPending: 'Catalogue actualisé. Reconstruction locale disponible.', recent: 'Cache récent : aucun appel catalogue.', retained: 'Données locales conservées. Aucun nouvel essai automatique.' };
-    $('#catalog-refresh-state').textContent = labels[result.state] || 'Données locales disponibles.';
-    await loadCatalogStatus();
+    $('#catalog-refresh-state').textContent = activeProvider()?.type === 'stalker' && result.state === 'updated'
+      ? 'Live actualisé. Le cache local est prêt.'
+      : labels[result.state] || 'Données locales disponibles.';
+    await loadCatalogStatus(true);
     if (!result.updated || state.activeProviderKey !== providerKey) return;
     state.catalogs.clear();
     if (state.page === 'home') await renderHome();
     else if (['live', 'vod', 'series'].includes(state.page)) await loadCatalogShell(state.page);
-    await pollIndex();
+    if (activeProvider()?.type === 'xtream') await pollIndex();
   }
   async function refreshCatalogManual() {
     const provider = activeProvider();
-    if (!provider || provider.type !== 'xtream' || catalogRefreshBusy) return;
+    if (!provider || catalogRefreshBusy) return;
     catalogRefreshBusy = true; $('#refresh-catalog').disabled = true;
-    catalogSessions.add(provider.key);
-    $('#catalog-refresh-state').textContent = 'Actualisation volontaire : Live, Films, puis Séries…';
+    if (provider.type === 'xtream') catalogSessions.add(provider.key);
+    $('#catalog-refresh-state').textContent = provider.type === 'stalker'
+      ? 'Actualisation volontaire du Live…'
+      : 'Actualisation volontaire : Live, Films, puis Séries…';
     try { await applyCatalogRefresh(provider.key, await rpc('catalog.refresh', { providerKey: provider.key })); }
     catch { $('#catalog-refresh-state').textContent = 'Données locales conservées. Aucun nouvel essai automatique.'; }
-    finally { catalogRefreshBusy = false; await loadCatalogStatus(); }
+    finally { catalogRefreshBusy = false; await loadCatalogStatus(true); }
   }
   $('#refresh-catalog').addEventListener('click', refreshCatalogManual);
   function renderProviderSelector() {
@@ -227,15 +237,22 @@
   async function loadCatalogShell(catalog) {
     const section = $(`#${catalog}`), list = section.querySelector('.category-list'); list.replaceChildren();
     section.querySelector('.catalog-grid').replaceChildren(); section.querySelector('.empty-catalog').classList.remove('hidden');
+    const categorySelect = section.querySelector('.category-select'); if (categorySelect) categorySelect.replaceChildren(Object.assign(node('option', '', 'Sélectionner une catégorie'), { value: '' }));
     if (!state.activeProviderKey) { section.querySelector('.empty-catalog').textContent = 'Aucun fournisseur actif.'; return; }
     try {
       const data = await rpc('categories.list', { providerKey: state.activeProviderKey, catalogType: catalog }, 'view');
       const selected = data.categories.filter(category => category.selected && category.present);
       state.catalogs.set(catalog, { categories: selected, categoryId: null, page: 1, totalPages: 1 });
+      renderCatalogSelector(catalog);
       renderCatalogCategories(catalog, '');
       if (selected.length) selectCatalogCategory(catalog, selected[0].id);
       else section.querySelector('.empty-catalog').textContent = 'Aucune catégorie sélectionnée.';
     } catch (error) { if (!isAbort(error)) toast(error.message, true); }
+  }
+  function renderCatalogSelector(catalog) {
+    const select = $(`#${catalog} .category-select`), model = state.catalogs.get(catalog); if (!select || !model) return;
+    const placeholder = node('option', '', 'Sélectionner une catégorie'); placeholder.value = ''; select.replaceChildren(placeholder);
+    model.categories.forEach(category => { const option = node('option', '', decodeHtmlEntities(category.name)); option.value = category.id; option.selected = category.id === model.categoryId; select.append(option); });
   }
   function renderCatalogCategories(catalog, filter) {
     const model = state.catalogs.get(catalog), container = $(`#${catalog} .category-list`); container.replaceChildren();
@@ -245,8 +262,9 @@
     });
   }
   $$('.catalog-page .category-filter').forEach(input => input.addEventListener('input', () => renderCatalogCategories(input.closest('.catalog-page').dataset.catalog, input.value)));
+  $$('.catalog-page .category-select').forEach(select => select.addEventListener('change', () => { if (select.value) selectCatalogCategory(select.closest('.catalog-page').dataset.catalog, select.value); }));
   async function selectCatalogCategory(catalog, categoryId, page = 1) {
-    const model = state.catalogs.get(catalog); if (!model) return; model.categoryId = categoryId; model.page = page; renderCatalogCategories(catalog, $(`#${catalog} .category-filter`).value);
+    const model = state.catalogs.get(catalog); if (!model) return; model.categoryId = categoryId; model.page = page; renderCatalogSelector(catalog); renderCatalogCategories(catalog, $(`#${catalog} .category-filter`).value);
     const section = $(`#${catalog}`), grid = section.querySelector('.catalog-grid'), empty = section.querySelector('.empty-catalog'), loading = section.querySelector('.loading-state');
     grid.replaceChildren(); empty.classList.add('hidden'); loading.classList.remove('hidden');
     try {
@@ -271,7 +289,7 @@
   function renderCatalogItems(catalog, items) {
     const grid = $(`#${catalog} .catalog-grid`), providerKey = state.activeProviderKey; grid.replaceChildren();
     items.forEach(item => {
-      const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id, extension: item.extension });
+      const reference = Object.freeze({ providerKey, mediaType: catalog, mediaId: item.id, extension: item.extension, categoryId: item.categoryId });
       if (catalog === 'live') {
         const card = node('article', 'media-card live-card'); const visual = imageOrPlaceholder(item.imageUrl, item.title, 'channel-logo');
         const title = node('strong', '', item.title); const play = button('Lire', 'play-small', event => { event.stopPropagation(); openPlayer(reference, item.title); });
@@ -380,7 +398,32 @@
     } catch (error) { if (!isAbort(error)) diagnostic.replaceChildren(node('p', 'form-error', error.message)); }
     finally { $('#test-provider').disabled = false; }
   });
-  function renderDiagnostic(data, onboarding = false) { const grid = node('div', 'diagnostic-grid'); if (!data) return grid; const values = [[data.type, 'Type détecté'], [data.authenticated ? '✓' : '✕', `Compte ${data.account}`]]; const xtreamOnboarding = onboarding && String(data.type).toLowerCase() === 'xtream'; if (!xtreamOnboarding) values.push([data.live, 'Live'], [data.vod, 'Films'], [data.series, 'Séries']); values.push([`${data.latencyMs} ms`, 'Latence']); values.forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); }); if (xtreamOnboarding) grid.append(node('span', 'muted', 'Catalogue local après activation')); if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails)); return grid; }
+  function formatDiagnosticExpiration(value) {
+    if (!value) return 'non fournie';
+    const date = new Date(value); if (Number.isNaN(date.getTime())) return 'non fournie';
+    return new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(date).replace(' à ', ' ');
+  }
+  function renderDiagnostic(data, onboarding = false) {
+    const grid = node('div', 'diagnostic-grid'); if (!data) return grid;
+    const authenticated = data.authenticated ?? data.accountOk;
+    const values = [[data.type, 'Type fournisseur'], [authenticated ? 'Compte valide' : 'Compte rejeté', 'Authentification']];
+    if (!authenticated && data.message) values.push([data.message, 'Diagnostic']);
+    if (data.accountStatus && !/^\d+$/.test(String(data.accountStatus))) values.push([data.accountStatus, 'Statut fournisseur']);
+    values.push([formatDiagnosticExpiration(data.expiresAt), 'Expiration']);
+    if (data.host || data.api) values.push([[data.host, data.api].filter(Boolean).join(' · '), 'Endpoint / API']);
+    if (data.maskedIdentity) values.push([data.maskedIdentity, data.identityLabel || 'Compte']);
+    if (data.credentialState) values.push([data.credentialState, 'Mot de passe']);
+    if (data.activeConnections !== null && data.activeConnections !== undefined) values.push([data.activeConnections, 'Connexions actives']);
+    if (data.maxConnections !== null && data.maxConnections !== undefined) values.push([data.maxConnections, 'Connexions maximales']);
+    if (data.allowedOutputFormats?.length) values.push([data.allowedOutputFormats.join(', '), 'Formats autorisés']);
+    const xtreamOnboarding = onboarding && String(data.type).toLowerCase() === 'xtream';
+    if (!xtreamOnboarding) values.push([data.live ?? data.liveCategories, 'Live'], [data.vod ?? data.vodCategories, 'Films'], [data.series ?? data.seriesCategories, 'Séries']);
+    values.push([`${data.latencyMs} ms`, 'Latence']);
+    values.forEach(([value, label]) => { const cell = node('span'); cell.append(node('strong', '', String(value)), document.createTextNode(` ${label}`)); grid.append(cell); });
+    if (xtreamOnboarding) grid.append(node('span', 'muted', 'Catalogue local après activation'));
+    if (data.protocolDetails) grid.append(node('span', 'muted', data.protocolDetails));
+    return grid;
+  }
   $$('.onboarding-tabs button').forEach(value => value.addEventListener('click', () => { $$('.onboarding-tabs button').forEach(buttonValue => buttonValue.classList.remove('active')); value.classList.add('active'); state.onboarding.catalog = value.dataset.onboardingCatalog; renderOnboardingCategories(); }));
   $('#onboarding-filter').addEventListener('input', renderOnboardingCategories);
   $('#onboarding-all').addEventListener('click', () => { const model = state.onboarding.policies[state.onboarding.catalog]; model.selected = new Set(model.items.map(item => item.remoteId)); model.mode = 'all'; renderOnboardingCategories(); });
@@ -403,7 +446,7 @@
     if (!state.app.providers.length) { list.append(node('p', 'muted', 'Aucun fournisseur configuré.')); return; }
     state.app.providers.forEach(provider => { const card = node('article', 'provider-card'); const copy = node('div'); copy.append(node('strong', '', provider.name), node('p', '', `${provider.type.toUpperCase()} · ${provider.serverUrl}`)); const actions = node('div', 'provider-actions'); actions.append(button('Diagnostic', 'secondary', () => diagnose(provider)), button('Modifier', 'secondary', () => openEdit(provider)), button(provider.enabled ? 'Désactiver' : 'Activer', 'secondary', () => toggleProvider(provider)), button('Supprimer', 'danger-button', () => deleteProvider(provider))); card.append(copy, actions); list.append(card); });
   }
-  async function diagnose(provider) { const panel = $('#diagnostic-panel'); panel.classList.remove('hidden'); panel.replaceChildren(node('p', 'muted', 'Diagnostic en cours…')); try { const result = await rpc('providers.diagnose', { providerKey: provider.key }, 'diagnostic'); panel.replaceChildren(node('h3', '', `Diagnostic · ${provider.name}`), renderDiagnostic({ type: result.type, authenticated: result.accountOk, account: result.message, live: result.liveCategories, vod: result.vodCategories, series: result.seriesCategories, latencyMs: result.latencyMs })); } catch (error) { panel.replaceChildren(node('p', 'form-error', error.message)); } }
+  async function diagnose(provider) { const panel = $('#diagnostic-panel'); panel.classList.remove('hidden'); panel.replaceChildren(node('p', 'muted', 'Diagnostic en cours…')); try { const result = await rpc('providers.diagnose', { providerKey: provider.key }, 'diagnostic'); panel.replaceChildren(node('h3', '', `Diagnostic · ${provider.name}`), renderDiagnostic(result)); } catch (error) { panel.replaceChildren(node('p', 'form-error', error.message)); } }
   async function toggleProvider(provider) { try { await rpc('providers.setEnabled', { providerKey: provider.key, enabled: !provider.enabled }, 'provider-action'); await refreshApp(); toast(provider.enabled ? 'Fournisseur désactivé.' : 'Fournisseur activé.'); } catch (error) { toast(error.message, true); } }
   function openEdit(provider) { const form = $('#edit-form'); form.reset(); form.elements.providerKey.value = provider.key; form.elements.name.value = provider.name; form.elements.serverUrl.value = provider.serverUrl; $('#edit-xtream').classList.toggle('hidden', provider.type !== 'xtream'); $('#edit-stalker').classList.toggle('hidden', provider.type !== 'stalker'); $('#edit-error').textContent = ''; $('#edit-dialog').showModal(); }
   $('#edit-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; try { await rpc('providers.update', { providerKey: form.elements.providerKey.value, name: form.elements.name.value, serverUrl: form.elements.serverUrl.value, username: form.elements.username.value || null, password: form.elements.password.value || null, macAddress: form.elements.macAddress.value || null }, 'provider-action'); form.elements.password.value = ''; form.elements.macAddress.value = ''; $('#edit-dialog').close(); await refreshApp(); toast('Fournisseur mis à jour.'); } catch (error) { form.elements.password.value = ''; form.elements.macAddress.value = ''; $('#edit-error').textContent = error.message; } });

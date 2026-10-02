@@ -23,6 +23,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     private static readonly TimeSpan TrackChangeResumeWindow = TimeSpan.FromSeconds(15);
 
     private readonly ILibMpvApiFactory _apiFactory;
+    private readonly IPlaybackDiagnosticTrace _trace;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly object _sync = new();
     private ILibMpvApi? _api;
@@ -35,13 +36,19 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     private TimeSpan? _duration;
     private bool _userPaused;
     private bool _playbackActive;
+    private bool _mediaSelected;
     private bool _pausedForCache;
     private DateTime _trackChangeResumeUntilUtc = DateTime.MinValue;
     private int _disposed;
 
-    public LibMpvPlayerService() : this(new LibMpvApiFactory(new LibMpvLibraryLocator())) { }
+    public LibMpvPlayerService() : this(new LibMpvApiFactory(new LibMpvLibraryLocator()), null) { }
+    public LibMpvPlayerService(IPlaybackDiagnosticTrace diagnosticTrace) : this(new LibMpvApiFactory(new LibMpvLibraryLocator()), diagnosticTrace) { }
 
-    internal LibMpvPlayerService(ILibMpvApiFactory apiFactory) => _apiFactory = apiFactory;
+    internal LibMpvPlayerService(ILibMpvApiFactory apiFactory, IPlaybackDiagnosticTrace? diagnosticTrace = null)
+    {
+        _apiFactory = apiFactory;
+        _trace = diagnosticTrace ?? NullPlaybackDiagnosticTrace.Instance;
+    }
 
     public event EventHandler? MediaLoaded;
     public event EventHandler<PlayerStateChangedEventArgs>? StateChanged;
@@ -73,9 +80,27 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             cancellationToken.ThrowIfCancellationRequested();
 
             var (api, handle) = RequiredEngine();
+            bool replacing;
+            lock (_sync)
+            {
+                replacing = _mediaSelected;
+                _mediaSelected = false;
+            }
+            if (replacing && api.Command(handle, "stop") < 0)
+                throw new InvalidOperationException("Impossible d’arrêter le média précédent.");
             var headers = FormatHeaders(media.Headers);
-            if (api.LoadFile(handle, media.Uri.AbsoluteUri, headers) < 0)
+            Trace("LIBMPV LOADFILE",
+                Field("scheme", SafePlaybackDiagnosticData.Scheme(media.Uri)),
+                Field("path", SafePlaybackDiagnosticData.PathBaseName(media.Uri)),
+                Field("query_keys", SafePlaybackDiagnosticData.QueryKeyNames(media.Uri)),
+                Field("header_names", SafePlaybackDiagnosticData.HeaderNames(media.Headers)),
+                Field("cookie_names", SafePlaybackDiagnosticData.CookieNames(media.Headers)),
+                Field("render_host_present", SafePlaybackDiagnosticData.Bool(renderHostHandle != 0)));
+            var loadResult = api.LoadFile(handle, media.Uri.AbsoluteUri, headers);
+            Trace("LIBMPV LOADFILE RESULT", Field("result", loadResult.ToString(CultureInfo.InvariantCulture)));
+            if (loadResult < 0)
                 throw new InvalidOperationException("Impossible de charger le média dans libmpv.");
+            lock (_sync) _mediaSelected = true;
         }
         catch (LibMpvUnavailableException exception)
         {
@@ -250,13 +275,19 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             while (!cancellationToken.IsCancellationRequested)
             {
                 var value = api.WaitEvent(handle, 0.1);
+                if (value.ErrorCode is < 0)
+                    Trace("LIBMPV EVENT", Field("event", "error"), Field("code", value.ErrorCode.Value.ToString(CultureInfo.InvariantCulture)));
                 switch (value.Kind)
                 {
                     case MpvEventKind.None:
                         await Task.Yield();
                         break;
+                    case MpvEventKind.StartFile:
+                        Trace("LIBMPV EVENT", Field("event", "start-file"));
+                        break;
                     case MpvEventKind.FileLoaded:
                     {
+                        Trace("LIBMPV EVENT", Field("event", "file-loaded"));
                         bool userPaused;
                         lock (_sync)
                         {
@@ -268,11 +299,19 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
                         RaiseState(userPaused ? PlayerState.Paused : PlayerState.Playing);
                         break;
                     }
+                    case MpvEventKind.PlaybackRestart:
+                        Trace("LIBMPV EVENT", Field("event", "playback-restart"));
+                        break;
                     case MpvEventKind.EndFile:
+                        Trace("LIBMPV EVENT",
+                            Field("event", "end-file"),
+                            Field("reason", value.EndReason?.ToString(CultureInfo.InvariantCulture) ?? "none"),
+                            Field("code", value.ErrorCode?.ToString(CultureInfo.InvariantCulture) ?? "none"));
                         MarkPlaybackInactive();
                         RaiseState(PlayerState.Stopped);
                         break;
                     case MpvEventKind.Shutdown:
+                        Trace("LIBMPV EVENT", Field("event", "shutdown"));
                         MarkPlaybackInactive();
                         RaiseState(PlayerState.Stopped);
                         return;
@@ -283,8 +322,9 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
             }
         }
         catch when (cancellationToken.IsCancellationRequested) { }
-        catch
+        catch (Exception exception)
         {
+            Trace("LIBMPV EVENT", Field("event", "error"), Field("error_type", exception.GetType().Name));
             RaiseState(PlayerState.Error, "Le moteur vidéo libmpv a rencontré une erreur.");
         }
     }
@@ -385,6 +425,7 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
         lock (_sync)
         {
             _playbackActive = false;
+            _mediaSelected = false;
             _pausedForCache = false;
             _trackChangeResumeUntilUtc = DateTime.MinValue;
         }
@@ -401,6 +442,13 @@ public sealed class LibMpvPlayerService : IPlayerService, IDisposable
     }
 
     private void RaiseState(PlayerState state, string? safeMessage = null) => StateChanged?.Invoke(this, new(state, safeMessage));
+
+    private void Trace(string eventName, params PlaybackDiagnosticField[] fields)
+    {
+        if (_trace.Enabled) _trace.Write(eventName, fields);
+    }
+
+    private static PlaybackDiagnosticField Field(string name, string value) => new(name, value);
 
     private (ILibMpvApi Api, nint Handle) RequiredEngine()
     {

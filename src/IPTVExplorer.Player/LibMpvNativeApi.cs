@@ -42,8 +42,13 @@ internal enum MpvFormat
     ByteArray = 9
 }
 
-internal enum MpvEventKind { None, Shutdown, FileLoaded, EndFile, PropertyChange }
-internal sealed record MpvEventValue(MpvEventKind Kind, string? PropertyName = null, object? Value = null);
+internal enum MpvEventKind { None, Shutdown, StartFile, FileLoaded, PlaybackRestart, EndFile, PropertyChange }
+internal sealed record MpvEventValue(
+    MpvEventKind Kind,
+    string? PropertyName = null,
+    object? Value = null,
+    int? ErrorCode = null,
+    int? EndReason = null);
 
 internal interface ILibMpvApiFactory
 {
@@ -243,13 +248,24 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
         return value.EventId switch
         {
             NativeMpvEventId.None => new(MpvEventKind.None),
-            NativeMpvEventId.Shutdown => new(MpvEventKind.Shutdown),
-            NativeMpvEventId.FileLoaded => new(MpvEventKind.FileLoaded),
-            NativeMpvEventId.EndFile => new(MpvEventKind.EndFile),
+            NativeMpvEventId.Shutdown => new(MpvEventKind.Shutdown, ErrorCode: Error(value.Error)),
+            NativeMpvEventId.StartFile => new(MpvEventKind.StartFile, ErrorCode: Error(value.Error)),
+            NativeMpvEventId.FileLoaded => new(MpvEventKind.FileLoaded, ErrorCode: Error(value.Error)),
+            NativeMpvEventId.PlaybackRestart => new(MpvEventKind.PlaybackRestart, ErrorCode: Error(value.Error)),
+            NativeMpvEventId.EndFile => ReadEndFile(value),
             NativeMpvEventId.PropertyChange => ReadProperty(value.Data),
             _ => new(MpvEventKind.None)
         };
     }
+
+    private static MpvEventValue ReadEndFile(NativeMpvEvent value)
+    {
+        if (value.Data == 0) return new(MpvEventKind.EndFile, ErrorCode: Error(value.Error));
+        var end = Marshal.PtrToStructure<NativeMpvEventEndFile>(value.Data);
+        return new(MpvEventKind.EndFile, ErrorCode: end.Error, EndReason: end.Reason);
+    }
+
+    private static int? Error(int value) => value == 0 ? null : value;
 
     public void Wakeup(nint handle) => _wakeup(handle);
     public void TerminateDestroy(nint handle) => _terminateDestroy(handle);
@@ -398,8 +414,10 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
     {
         None = 0,
         Shutdown = 1,
+        StartFile = 6,
         EndFile = 7,
         FileLoaded = 8,
+        PlaybackRestart = 21,
         PropertyChange = 22
     }
 
@@ -418,6 +436,16 @@ internal sealed class LibMpvNativeApi : ILibMpvApi
         public readonly nint Name;
         public readonly MpvFormat Format;
         public readonly nint Data;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct NativeMpvEventEndFile
+    {
+        public readonly int Reason;
+        public readonly int Error;
+        public readonly long PlaylistEntryId;
+        public readonly long PlaylistInsertId;
+        public readonly int PlaylistInsertNumEntries;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 16)]

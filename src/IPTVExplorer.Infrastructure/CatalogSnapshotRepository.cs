@@ -6,7 +6,7 @@ using Microsoft.Data.Sqlite;
 namespace IPTVExplorer.Infrastructure;
 
 /// <summary>One atomic generation containing all three catalogs, with provider-scoped normalized rows.</summary>
-public sealed class CatalogSnapshotRepository(SqliteConnectionFactory connections)
+public sealed class CatalogSnapshotRepository(SqliteConnectionFactory connections) : IStalkerLiveCatalogStore
 {
     public async Task<DateTimeOffset?> RefreshedAtAsync(string providerKey, CancellationToken token = default)
     {
@@ -86,6 +86,62 @@ public sealed class CatalogSnapshotRepository(SqliteConnectionFactory connection
             await command.ExecuteNonQueryAsync(token);
         }
     }
+
+    /// <summary>Atomically replaces only Stalker Live rows. Existing Xtream all-catalog publication semantics are untouched.</summary>
+    public async Task ReplaceAsync(string providerKey, IReadOnlyList<CatalogItem> items, ProviderSecret secret,
+        DateTimeOffset refreshedAt, CancellationToken token = default)
+    {
+        if (!ProviderKey.IsValid(providerKey)) throw new InvalidDataException("A valid provider key is required.");
+        var clean = items.Select(item => CatalogSanitizer.Item(item, secret) with { Metadata = null }).ToArray();
+        await using var connection = connections.Create();
+        connection.ConnectionString = new SqliteConnectionStringBuilder(connection.ConnectionString)
+        {
+            Cache = SqliteCacheMode.Private,
+            Pooling = false
+        }.ToString();
+        await connection.OpenAsync(token);
+        await using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys=ON";
+            await pragma.ExecuteNonQueryAsync(token);
+        }
+        await using var transaction = connection.BeginTransaction();
+        await using (var snapshot = connection.CreateCommand())
+        {
+            snapshot.Transaction = transaction;
+            snapshot.CommandText = "INSERT INTO catalog_snapshots(provider_key,refreshed_at,generation) VALUES($key,$now,1) ON CONFLICT(provider_key) DO UPDATE SET refreshed_at=excluded.refreshed_at,generation=generation+1";
+            snapshot.Parameters.AddWithValue("$key", providerKey);
+            snapshot.Parameters.AddWithValue("$now", refreshedAt.ToString("O"));
+            await snapshot.ExecuteNonQueryAsync(token);
+        }
+        await using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM catalog_items WHERE provider_key=$key AND catalog_type='live'";
+            delete.Parameters.AddWithValue("$key", providerKey);
+            await delete.ExecuteNonQueryAsync(token);
+        }
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText = "INSERT OR REPLACE INTO catalog_items(provider_key,catalog_type,remote_id,category_id,title,item_json) VALUES($key,'live',$id,$category,$title,$json)";
+            insert.Parameters.AddWithValue("$key", providerKey);
+            foreach (var parameter in new[] { "$id", "$category", "$title", "$json" }) insert.Parameters.Add(parameter, SqliteType.Text);
+            foreach (var item in clean)
+            {
+                token.ThrowIfCancellationRequested();
+                insert.Parameters["$id"].Value = item.Id;
+                insert.Parameters["$category"].Value = item.CategoryId!;
+                insert.Parameters["$title"].Value = item.Title;
+                insert.Parameters["$json"].Value = JsonSerializer.Serialize(item);
+                await insert.ExecuteNonQueryAsync(token);
+            }
+        }
+        await transaction.CommitAsync(token);
+    }
+
+    Task<IReadOnlyList<CatalogItem>> IStalkerLiveCatalogStore.ReadAsync(string providerKey, string? categoryId, CancellationToken cancellationToken) =>
+        ReadAsync(providerKey, CatalogType.Live, categoryId, cancellationToken);
 
     public async Task<IReadOnlyList<CatalogItem>> ReadAsync(string providerKey, CatalogType catalog, string? categoryId = null, CancellationToken token = default)
     {

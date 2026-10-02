@@ -20,7 +20,9 @@ public sealed class PlayerPhase3Tests
         var player = new RecordingPlayerService();
         var windows = new RecordingWindowManager((nint)4242);
         var history = new PlaybackHistoryRepository(database.Connections);
-        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows);
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        var probe = new RecordingStalkerMediaProbe(enabled: true);
+        await using var coordinator = new PlaybackCoordinator(database.Repository, new ProviderClientFactory(new StubHttpClientFactory(), secrets), history, player, windows, trace, probe);
 
         var result = await coordinator.OpenAsync(new MediaReference(provider.Key, CatalogType.Vod, "movie-42", Extension: "mkv"));
 
@@ -32,6 +34,40 @@ public sealed class PlayerPhase3Tests
         Assert.DoesNotContain("user-demo", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("password-demo", serialized, StringComparison.Ordinal);
         Assert.Equal("opened", result.State);
+        Assert.Contains("PLAYBACK LOAD REQUEST provider_type=Xtream", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://", trace.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("user-demo", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("password-demo", trace.Text, StringComparison.Ordinal);
+        Assert.Equal(0, probe.Calls);
+    }
+
+    [Fact]
+    public async Task ActiveStalkerProbeBypassesLibMpvLoad()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var provider = await database.AddProviderAsync(ProviderType.Stalker);
+        await database.Repository.SetEnabledAsync(provider.Key, true);
+        var resolved = new ResolvedMedia(
+            new Uri("https://media.example.invalid/live.php?stream=private-stream"),
+            new Dictionary<string, string> { ["Authorization"] = "Bearer private-session" });
+        var player = new RecordingPlayerService();
+        var windows = new RecordingWindowManager((nint)4343);
+        var history = new PlaybackHistoryRepository(database.Connections);
+        var probe = new RecordingStalkerMediaProbe(enabled: true);
+        await using var coordinator = new PlaybackCoordinator(
+            database.Repository,
+            new SingleClientFactory(new ResolvedOnlyProviderClient(resolved)),
+            history,
+            player,
+            windows,
+            mediaProbe: probe);
+
+        var result = await coordinator.OpenAsync(new MediaReference(provider.Key, CatalogType.Live, "live-42"));
+
+        Assert.Equal("probed", result.State);
+        Assert.Equal(1, probe.Calls);
+        Assert.Same(resolved, probe.Media);
+        Assert.Null(player.Media);
     }
 
     [Fact]
@@ -286,6 +322,74 @@ public sealed class PlayerPhase3Tests
     }
 
     [Fact]
+    public async Task LibMpvTraceReportsSafeLoadSummaryAndNumericResult()
+    {
+        var api = new RecordingMpvApi { LoadFileResult = -13 };
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api), trace);
+        var media = new ResolvedMedia(
+            new Uri("https://media.example.invalid/live.php?stream=private-stream&play_token=private-play-token"),
+            new Dictionary<string, string>
+            {
+                ["Authorization"] = "Bearer private-authorization",
+                ["Cookie"] = "mac=00:1A:79:AA:BB:CC; token=private-session"
+            });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => player.LoadAsync(media, (nint)656));
+
+        Assert.Contains("LIBMPV LOADFILE ", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("scheme=https", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("path=live.php", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("query_keys=play_token,stream", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("header_names=Authorization,Cookie", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("cookie_names=mac,stb_lang,timezone,token,play_token", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("LIBMPV LOADFILE RESULT result=-13", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://", trace.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("private-stream", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-play-token", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-authorization", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-session", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("00:1A:79:AA:BB:CC", trace.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LibMpvTraceReportsRelevantEventsWithoutPayloads()
+    {
+        var api = new RecordingMpvApi();
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api), trace);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        player.StateChanged += (_, value) =>
+        {
+            if (value.State == PlayerState.Stopped) stopped.TrySetResult();
+        };
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/live.php")), (nint)657);
+        api.Enqueue(new(MpvEventKind.StartFile));
+        api.Enqueue(new(MpvEventKind.PlaybackRestart));
+        api.Enqueue(new(MpvEventKind.EndFile, ErrorCode: -12, EndReason: 4));
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Contains("event=start-file", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("event=playback-restart", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("event=end-file reason=4 code=-12", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("media.example.invalid", trace.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LoadingAnotherMediaStopsThePreviousSelectionBeforeReplacement()
+    {
+        var api = new RecordingMpvApi();
+        await using var player = new LibMpvPlayerService(new RecordingMpvApiFactory(api));
+
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/first")), (nint)655);
+        await player.LoadAsync(new ResolvedMedia(new Uri("https://media.example.invalid/second")), (nint)655);
+
+        Assert.Equal(2, api.Loads.Count);
+        Assert.Equal(["stop"], api.Commands.Select(command => string.Join(' ', command)));
+    }
+
+    [Fact]
     public async Task TrackChangeResumesAfterCachePauseButRespectsExplicitUserPause()
     {
         var api = new RecordingMpvApi();
@@ -433,14 +537,16 @@ public sealed class PlayerPhase3Tests
         public ConcurrentQueue<(string Name, string Value)> Properties { get; } = [];
         public ConcurrentQueue<string> ObservedProperties { get; } = [];
         public ConcurrentQueue<LoadFileCall> Loads { get; } = [];
+        public ConcurrentQueue<string[]> Commands { get; } = [];
         public int CreateCalls { get; private set; }
+        public int LoadFileResult { get; init; }
         public bool Terminated { get; private set; }
         public bool Disposed { get; private set; }
         public nint Create() { CreateCalls++; return (nint)55; }
         public int SetOptionString(nint handle, string name, string value) { Options.Enqueue((name, value)); return 0; }
         public int Initialize(nint handle) => 0;
-        public int Command(nint handle, params string[] arguments) => 0;
-        public int LoadFile(nint handle, string uri, string? httpHeaderFields) { Loads.Enqueue(new(uri, httpHeaderFields)); return 0; }
+        public int Command(nint handle, params string[] arguments) { Commands.Enqueue(arguments); return 0; }
+        public int LoadFile(nint handle, string uri, string? httpHeaderFields) { Loads.Enqueue(new(uri, httpHeaderFields)); return LoadFileResult; }
         public int SetPropertyString(nint handle, string name, string value) { Properties.Enqueue((name, value)); return 0; }
         public int ObserveProperty(nint handle, ulong userData, string name, MpvFormat format) { ObservedProperties.Enqueue(name); return 0; }
         public MpvEventValue WaitEvent(nint handle, double timeoutSeconds)
@@ -478,5 +584,42 @@ public sealed class PlayerPhase3Tests
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
             });
         }
+    }
+
+    private sealed class RecordingStalkerMediaProbe(bool enabled) : IStalkerMediaProbe
+    {
+        public bool Enabled { get; } = enabled;
+        public int Calls { get; private set; }
+        public ResolvedMedia? Media { get; private set; }
+        public Task ProbeAsync(ResolvedMedia media, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            Media = media;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SingleClientFactory(IProviderClient client) : IProviderClientFactory
+    {
+        public Task<IProviderClient> CreateAsync(ProviderRecord provider, CancellationToken cancellationToken = default) =>
+            Task.FromResult(client);
+    }
+
+    private sealed class ResolvedOnlyProviderClient(ResolvedMedia media) : IProviderClient
+    {
+        public ProviderType Type => ProviderType.Stalker;
+        public Task<ResolvedMedia> ResolveMediaAsync(MediaRequest request, CancellationToken cancellationToken = default) => Task.FromResult(media);
+        public Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<AccountInfo> GetAccountInfoAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<ProviderCategory>> GetLiveCategoriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<ProviderCategory>> GetVodCategoriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<ProviderCategory>> GetSeriesCategoriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<CatalogItem>> GetLiveAsync(string categoryId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<CatalogPage<CatalogItem>> GetVodPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<CatalogPage<CatalogItem>> GetSeriesPageAsync(string categoryId, int page, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<CatalogItem> GetVodInfoAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<CatalogItem> GetSeriesInfoAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<VodDetails> GetVodDetailsAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SeriesDetails> GetSeriesDetailsAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

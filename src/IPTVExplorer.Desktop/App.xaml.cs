@@ -40,6 +40,8 @@ public partial class App : Application
             builder.Services.AddSingleton<SeriesArtworkRepository>();
             builder.Services.AddSingleton<RecentSeriesArtwork>();
             builder.Services.AddSingleton<CatalogSnapshotRepository>();
+            builder.Services.AddSingleton<IStalkerLiveCatalogStore>(sp => sp.GetRequiredService<CatalogSnapshotRepository>());
+            builder.Services.AddSingleton<IPlaybackDiagnosticTrace, SafePlaybackDiagnosticTrace>();
             builder.Services.AddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<CatalogRefreshService>();
             builder.Services.AddSingleton<MediaDetailService>();
@@ -66,6 +68,13 @@ public partial class App : Application
                     AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
                     ConnectTimeout = TimeSpan.FromSeconds(8),
                     PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+                    AllowAutoRedirect = false,
+                    UseCookies = false
+                });
+            builder.Services.AddHttpClient<IStalkerMediaProbe, StalkerMediaProbe>(client => client.Timeout = Timeout.InfiniteTimeSpan)
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    ConnectTimeout = TimeSpan.FromSeconds(3),
                     AllowAutoRedirect = false,
                     UseCookies = false
                 });

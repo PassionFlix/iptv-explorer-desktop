@@ -26,7 +26,9 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
         if (!document.RootElement.TryGetProperty("user_info", out var user)) return new(false, null, null);
         var authenticated = user.Text("auth") == "1";
         DateTimeOffset? expires = long.TryParse(user.Text("exp_date"), out var epoch) && epoch > 0 ? DateTimeOffset.FromUnixTimeSeconds(epoch) : null;
-        return new AccountInfo(authenticated, user.Text("status"), expires);
+        int? activeConnections = int.TryParse(user.Text("active_cons"), out var active) && active >= 0 ? active : null;
+        int? maxConnections = int.TryParse(user.Text("max_connections"), out var maximum) && maximum >= 0 ? maximum : null;
+        return new AccountInfo(authenticated, user.Text("status"), expires, activeConnections, maxConnections, OutputFormats(user));
     }
 
     public Task<IReadOnlyList<ProviderCategory>> GetLiveCategoriesAsync(CancellationToken cancellationToken = default) => Categories("get_live_categories", cancellationToken);
@@ -102,7 +104,12 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
         var extension = string.IsNullOrWhiteSpace(request.Extension) ? fallbackExtension : request.Extension.Trim().TrimStart('.');
         // MediaId is deliberately the episode id for series playback, never the series id.
         var relative = $"{folder}/{Uri.EscapeDataString(secret.Username!)}/{Uri.EscapeDataString(secret.Password!)}/{Uri.EscapeDataString(request.MediaId)}.{Uri.EscapeDataString(extension)}";
-        return Task.FromResult(new ResolvedMedia(new Uri(EnsureTrailingSlash(provider.ServerUri), relative)));
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["User-Agent"] = ProviderHttpRegistration.MediaUserAgent,
+            ["Accept"] = "*/*"
+        };
+        return Task.FromResult(new ResolvedMedia(new Uri(EnsureTrailingSlash(provider.ServerUri), relative), headers));
     }
 
     private async Task<IReadOnlyList<ProviderCategory>> Categories(string action, CancellationToken cancellationToken)
@@ -152,4 +159,15 @@ public sealed class XtreamProviderClient(ProviderRecord provider, ProviderSecret
         return builder.Uri;
     }
     private static double? ParseRating(string? value) => double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var rating) ? rating : null;
+    private static IReadOnlyList<string>? OutputFormats(JsonElement user)
+    {
+        if (user.ValueKind != JsonValueKind.Object || !user.TryGetProperty("allowed_output_formats", out var value)) return null;
+        var formats = value.ValueKind switch
+        {
+            JsonValueKind.Array => value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()?.Trim()).Where(item => !string.IsNullOrWhiteSpace(item)).Cast<string>().ToArray(),
+            JsonValueKind.String => (value.GetString() ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
+            _ => []
+        };
+        return formats.Length == 0 ? null : formats.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 }

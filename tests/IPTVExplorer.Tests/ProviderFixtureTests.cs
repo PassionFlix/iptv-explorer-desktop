@@ -37,6 +37,43 @@ public sealed class ProviderFixtureTests
         Assert.Equal("episode-501", episode.Id);
         var resolved = await client.ResolveMediaAsync(new MediaRequest(CatalogType.Series, episode.Id, series.Id, "mkv"));
         Assert.Contains("/series/user-demo/password-demo/episode-501.mkv", resolved.Uri.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal(ProviderHttpRegistration.MediaUserAgent, resolved.Headers?["User-Agent"]);
+        Assert.Equal("*/*", resolved.Headers?["Accept"]);
+        Assert.DoesNotContain(resolved.Headers!, pair => pair.Value.Contains(XtreamSecret.Password!, StringComparison.Ordinal));
+        Assert.DoesNotContain(resolved.Headers!, pair => pair.Key.Contains("token", StringComparison.OrdinalIgnoreCase));
+        var account = await client.GetAccountInfoAsync();
+        Assert.Equal(2, account.ActiveConnections);
+        Assert.Equal(4, account.MaxConnections);
+        Assert.Equal(["ts", "m3u8"], account.AllowedOutputFormats);
+        Assert.NotNull(account.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task XtreamDiagnosticIncludesAccountDetailsButOnlyMaskedCredentials()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var secrets = new InMemorySecretStore();
+        var secretReference = await secrets.PutAsync(new ProviderSecret("nicolas", "fixture-password"));
+        var provider = await database.AddProviderAsync(ProviderType.Xtream, secretReference);
+        using var handler = new StaticJsonHandler("{\"user_info\":{\"auth\":1,\"status\":\"Active\",\"exp_date\":1800000000,\"active_cons\":2,\"max_connections\":4,\"allowed_output_formats\":[\"ts\",\"m3u8\"]}}");
+        var factory = new ProviderClientFactory(new StubHttpClientFactory(handler), secrets);
+        var service = new ProviderManagementService(database.Repository, secrets, factory, new ProviderLocalDataStore(database.Paths));
+
+        var diagnostic = await service.DiagnoseAsync(provider.Key);
+        var serialized = System.Text.Json.JsonSerializer.Serialize(diagnostic);
+
+        Assert.True(diagnostic.AccountOk);
+        Assert.Equal("Compte valide", diagnostic.Message);
+        Assert.Equal("Active", diagnostic.AccountStatus);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_800_000_000), diagnostic.ExpiresAt);
+        Assert.Equal("Identifiant", diagnostic.IdentityLabel);
+        Assert.Equal("ni••••as", diagnostic.MaskedIdentity);
+        Assert.Equal("Configuré", diagnostic.CredentialState);
+        Assert.Equal(2, diagnostic.ActiveConnections);
+        Assert.Equal(4, diagnostic.MaxConnections);
+        Assert.Equal(["ts", "m3u8"], diagnostic.AllowedOutputFormats);
+        Assert.DoesNotContain("nicolas", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-password", serialized, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -354,8 +391,8 @@ public sealed class ProviderFixtureTests
 
     [Theory]
     [InlineData("/portal.php", 1)]
-    [InlineData("/server/load.php", 2)]
-    [InlineData("/stalker_portal/server/load.php", 3)]
+    [InlineData("/server/load.php", 3)]
+    [InlineData("/stalker_portal/server/load.php", 5)]
     public async Task AutomaticOnboardingFallsBackAcrossStandardStalkerEndpoints(string acceptedPath, int expectedHandshakeAttempts)
     {
         await using var database = await TestDatabase.CreateAsync();
@@ -391,7 +428,7 @@ public sealed class ProviderFixtureTests
 
         Assert.Equal(ProviderType.Stalker, tested.DetectedType);
         Assert.Equal("/server/load.php", handler.SuccessfulPath);
-        Assert.Equal(["/portal.php", "/server/load.php"], handler.HandshakePaths);
+        Assert.Equal(["/portal.php", "/portal.php", "/server/load.php"], handler.HandshakePaths);
     }
 
     [Fact]
@@ -408,9 +445,11 @@ public sealed class ProviderFixtureTests
 
         Assert.Null(tested.DetectedType);
         Assert.StartsWith("Impossible d’établir une session Stalker/MAG", tested.Message, StringComparison.Ordinal);
-        Assert.Contains("/portal.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
-        Assert.Contains("/server/load.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
-        Assert.Contains("/stalker_portal/server/load.php → handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/portal.php → handshake rejected both safe request profiles", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/server/load.php → handshake rejected both safe request profiles", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("/stalker_portal/server/load.php → handshake rejected both safe request profiles", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("Legacy: handshake HTTP 404", tested.Message, StringComparison.Ordinal);
+        Assert.Contains("MAG254-compatible: handshake HTTP 404", tested.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(StalkerSecret.MacAddress!, tested.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("fixture-token", tested.Message, StringComparison.Ordinal);
     }
@@ -456,7 +495,7 @@ public sealed class ProviderFixtureTests
             var action = Parameter(request.RequestUri, "action");
             var json = action switch
             {
-                null => "{\"user_info\":{\"auth\":1,\"status\":\"Active\",\"exp_date\":1999999999},\"server_info\":{\"url\":\"example.invalid\"}}",
+                null => "{\"user_info\":{\"auth\":1,\"status\":\"Active\",\"exp_date\":1999999999,\"active_cons\":2,\"max_connections\":4,\"allowed_output_formats\":[\"ts\",\"m3u8\"]},\"server_info\":{\"url\":\"example.invalid\"}}",
                 "get_live_categories" => "[{\"category_id\":\"10\",\"category_name\":\"Live Fixture\"}]",
                 "get_vod_categories" => "[{\"category_id\":\"20\",\"category_name\":\"Films Fixture\"}]",
                 "get_series_categories" => "[{\"category_id\":\"30\",\"category_name\":\"Series Fixture\"}]",
