@@ -63,6 +63,8 @@ public partial class App : Application
             builder.Services.AddSingleton<MediaDownloadManager>();
             builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddSingleton<FavoriteBridge>();
+            builder.Services.AddSingleton<INativeSecretPresenter, NativeSecretPresenter>();
+            builder.Services.AddSingleton<ProviderSecretBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
             builder.Services.AddHttpClient("providers", ProviderHttpRegistration.Configure)
                 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -87,7 +89,8 @@ public partial class App : Application
             var window = new MainWindow(
                 _host.Services.GetRequiredService<BridgeRouter>(),
                 _host.Services.GetRequiredService<MediaActionBridge>(),
-                _host.Services.GetRequiredService<FavoriteBridge>());
+                _host.Services.GetRequiredService<FavoriteBridge>(),
+                _host.Services.GetRequiredService<ProviderSecretBridge>());
             MainWindow = window;
             window.Show();
         }
