@@ -17,6 +17,16 @@ test('MainWindow owns a native Live surface and all required controls', () => {
   assert.match(xaml, /Click="OnLiveStop"/);
 });
 
+test('idle Live surface uses a branded dark placeholder until playback is ready', () => {
+  for (const name of ['LiveIdlePlaceholder', 'LivePlaceholderTitle', 'LivePlaceholderSubtitle']) assert.match(xaml, new RegExp(`x:Name="${name}"`));
+  assert.match(xaml, /NativeVideoHost x:Name="LiveVideoHost" Visibility="Collapsed"/);
+  assert.match(main, /UpdateLiveVideoSurface\(PlayerState\.Loading\)/);
+  assert.match(main, /var showVideo = state is PlayerState\.Playing or PlayerState\.Paused/);
+  assert.match(main, /LiveVideoHost\.Visibility = showVideo \? Visibility\.Visible : Visibility\.Collapsed/);
+  assert.match(main, /LiveIdlePlaceholder\.Visibility = showVideo \? Visibility\.Collapsed : Visibility\.Visible/);
+  assert.match(main, /PlayerState\.Stopped => \("Lecture arrêtée"/);
+});
+
 test('WebView2 and libmpv use separate WPF sibling columns to avoid HWND airspace overlap', () => {
   assert.match(xaml, /BrowserHost" Grid.Column="0"/);
   assert.match(xaml, /LivePlayerPane" Grid.Column="1"/);

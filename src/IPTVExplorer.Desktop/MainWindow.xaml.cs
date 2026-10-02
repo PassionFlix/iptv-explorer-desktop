@@ -221,6 +221,7 @@ public partial class MainWindow : Window
         LivePlayPauseButton.Content = "Pause";
 
         LiveFullscreenPlayPauseButton.Content = "Pause";
+        UpdateLiveVideoSurface(PlayerState.Loading);
 
         if (LiveVideoHost.NativeHandle != 0) _liveRenderHandle.TrySetResult(LiveVideoHost.NativeHandle);
         return await _liveRenderHandle.Task.WaitAsync(cancellationToken);
@@ -262,6 +263,7 @@ public partial class MainWindow : Window
         LiveFullscreenPlayPauseButton.Content = "Pause";
         LiveAudioTracks.ItemsSource = null;
         LiveSubtitleTracks.ItemsSource = null;
+        UpdateLiveVideoSurface(PlayerState.Idle);
     }
 
     private void OnLiveHandleReady(object? sender, EventArgs e)
@@ -289,6 +291,7 @@ public partial class MainWindow : Window
             PlayerState.Error => "Erreur du lecteur",
             _ => "Prêt"
         };
+        UpdateLiveVideoSurface(state);
     });
 
     private void OnLiveTrackListChanged(object? sender, TrackListChangedEventArgs e) => Dispatcher.BeginInvoke(() =>
@@ -334,6 +337,22 @@ public partial class MainWindow : Window
         LivePlayPauseButton.Content = "Lecture";
         LiveFullscreenPlayPauseButton.Content = "Lecture";
         LiveStatusText.Text = "Arrêté";
+        UpdateLiveVideoSurface(PlayerState.Stopped);
+    }
+
+    private void UpdateLiveVideoSurface(PlayerState state)
+    {
+        var showVideo = state is PlayerState.Playing or PlayerState.Paused;
+        LiveVideoHost.Visibility = showVideo ? Visibility.Visible : Visibility.Collapsed;
+        LiveIdlePlaceholder.Visibility = showVideo ? Visibility.Collapsed : Visibility.Visible;
+        LiveStatusBadge.Visibility = showVideo && !_liveFullscreenBehavior.IsFullscreen ? Visibility.Visible : Visibility.Collapsed;
+
+        (LivePlaceholderTitle.Text, LivePlaceholderSubtitle.Text) = state switch
+        {
+            PlayerState.Stopped => ("Lecture arrêtée", "Relancez la lecture ou choisissez une autre chaîne."),
+            PlayerState.Error => ("Lecture indisponible", "Choisissez une autre chaîne pour continuer."),
+            _ => ("Sélectionnez une chaîne", "Choisissez une chaîne dans la liste pour démarrer la lecture.")
+        };
     }
 
     private void OnLiveVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -401,7 +420,7 @@ public partial class MainWindow : Window
             LiveHeaderPanel.Visibility = Visibility.Visible;
             LiveControlsPanel.Visibility = Visibility.Visible;
             LiveTracksPanel.Visibility = Visibility.Visible;
-            LiveStatusBadge.Visibility = Visibility.Visible;
+            UpdateLiveVideoSurface(_liveState);
             LiveVideoFrame.BorderThickness = new Thickness(1);
             LiveVideoFrame.CornerRadius = new CornerRadius(8);
             LiveFullscreenButton.Content = "Plein écran";

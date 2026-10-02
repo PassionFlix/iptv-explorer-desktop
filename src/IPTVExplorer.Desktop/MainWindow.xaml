@@ -42,9 +42,30 @@
         <Border x:Name="LiveVideoFrame" Grid.Row="1" MinHeight="240" Background="Black" BorderBrush="#1F2937"
                 BorderThickness="1" CornerRadius="8" ClipToBounds="True">
           <Grid>
-            <local:NativeVideoHost x:Name="LiveVideoHost" />
+            <Grid x:Name="LiveIdlePlaceholder" IsHitTestVisible="False">
+              <Grid.Background>
+                <RadialGradientBrush Center="0.5,0.42" GradientOrigin="0.5,0.42" RadiusX="0.72" RadiusY="0.88">
+                  <GradientStop Color="#182743" Offset="0" />
+                  <GradientStop Color="#0A1220" Offset="0.52" />
+                  <GradientStop Color="#050A12" Offset="1" />
+                </RadialGradientBrush>
+              </Grid.Background>
+              <Ellipse Width="430" Height="430" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="#172A46" StrokeThickness="1" Opacity="0.58" />
+              <Ellipse Width="300" Height="300" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="#1D3556" StrokeThickness="1" Opacity="0.72" />
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+                <Border Width="92" Height="92" HorizontalAlignment="Center" CornerRadius="24" Background="#0E1728" BorderBrush="#4F6BFF" BorderThickness="2">
+                  <Grid>
+                    <Border Width="64" Height="64" CornerRadius="18" Background="#111E33" BorderBrush="#27D3C2" BorderThickness="1" />
+                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#F8FAFC" FontSize="27" FontWeight="Bold" Text="IE" />
+                  </Grid>
+                </Border>
+                <TextBlock x:Name="LivePlaceholderTitle" Margin="0,22,0,0" HorizontalAlignment="Center" Foreground="#F8FAFC" FontSize="24" FontWeight="SemiBold" Text="Sélectionnez une chaîne" />
+                <TextBlock x:Name="LivePlaceholderSubtitle" Margin="0,9,0,0" HorizontalAlignment="Center" Foreground="#8FA2BC" FontSize="13" TextAlignment="Center" TextWrapping="Wrap" Text="Choisissez une chaîne dans la liste pour démarrer la lecture." />
+              </StackPanel>
+            </Grid>
+            <local:NativeVideoHost x:Name="LiveVideoHost" Visibility="Collapsed" />
             <Border x:Name="LiveStatusBadge" Margin="10" Padding="9,5" VerticalAlignment="Top" HorizontalAlignment="Left"
-                    CornerRadius="999" Background="#C0141B26" IsHitTestVisible="False">
+                    CornerRadius="999" Background="#C0141B26" IsHitTestVisible="False" Visibility="Collapsed">
               <TextBlock x:Name="LiveStatusText" Foreground="#D7E0EC" FontSize="11" Text="Prêt" />
             </Border>
           </Grid>
