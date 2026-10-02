@@ -17,13 +17,20 @@ public partial class MainWindow : Window
     private readonly MediaActionBridge _mediaActions;
     private readonly FavoriteBridge _favorites;
     private readonly ProviderSecretBridge _providerSecrets;
+    private readonly CatalogStatsBridge _catalogStats;
 
-    public MainWindow(BridgeRouter bridge, MediaActionBridge mediaActions, FavoriteBridge favorites, ProviderSecretBridge providerSecrets)
+    public MainWindow(
+        BridgeRouter bridge,
+        MediaActionBridge mediaActions,
+        FavoriteBridge favorites,
+        ProviderSecretBridge providerSecrets,
+        CatalogStatsBridge catalogStats)
     {
         _bridge = bridge;
         _mediaActions = mediaActions;
         _favorites = favorites;
         _providerSecrets = providerSecrets;
+        _catalogStats = catalogStats;
         InitializeComponent();
         Loaded += FitWindowToWorkArea;
         Loaded += InitializeWebViewAsync;
@@ -75,6 +82,8 @@ public partial class MainWindow : Window
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(liveCompactScript);
             var providerNativeActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "provider-native-actions.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(providerNativeActionsScript);
+            var diagnosticStatsScript = await File.ReadAllTextAsync(Path.Combine(assets, "diagnostic-local-stats.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(diagnosticStatsScript);
             var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
@@ -161,6 +170,7 @@ public partial class MainWindow : Window
         var message = e.WebMessageAsJson;
         if (message.Length > 2_000_000) return;
         var response = await _providerSecrets.TryHandleAsync(message)
+            ?? await _catalogStats.TryHandleAsync(message)
             ?? await _favorites.TryHandleAsync(message)
             ?? await _mediaActions.TryHandleAsync(message)
             ?? await _bridge.HandleAsync(message);

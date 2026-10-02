@@ -48,6 +48,7 @@ public partial class App : Application
             builder.Services.AddSingleton<PlaybackHistoryRepository>();
             builder.Services.AddSingleton<IPlaybackHistoryRepository>(sp => sp.GetRequiredService<PlaybackHistoryRepository>());
             builder.Services.AddSingleton<FavoriteRepository>();
+            builder.Services.AddSingleton<LocalCatalogStatsRepository>();
             builder.Services.AddSingleton<IRemoteProviderClientFactory, ProviderClientFactory>();
             builder.Services.AddSingleton<IProviderClientFactory, LocalProviderClientFactory>();
             // Only explicit setup/settings operations receive the remote factory.
@@ -63,6 +64,7 @@ public partial class App : Application
             builder.Services.AddSingleton<MediaDownloadManager>();
             builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddSingleton<FavoriteBridge>();
+            builder.Services.AddSingleton<CatalogStatsBridge>();
             builder.Services.AddSingleton<INativeSecretPresenter, NativeSecretPresenter>();
             builder.Services.AddSingleton<ProviderSecretBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
@@ -90,7 +92,8 @@ public partial class App : Application
                 _host.Services.GetRequiredService<BridgeRouter>(),
                 _host.Services.GetRequiredService<MediaActionBridge>(),
                 _host.Services.GetRequiredService<FavoriteBridge>(),
-                _host.Services.GetRequiredService<ProviderSecretBridge>());
+                _host.Services.GetRequiredService<ProviderSecretBridge>(),
+                _host.Services.GetRequiredService<CatalogStatsBridge>());
             MainWindow = window;
             window.Show();
         }
