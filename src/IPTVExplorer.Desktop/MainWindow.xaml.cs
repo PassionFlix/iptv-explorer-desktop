@@ -69,6 +69,8 @@ public partial class MainWindow : Window
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
             var favoritesScript = await File.ReadAllTextAsync(Path.Combine(assets, "favorites.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(favoritesScript);
+            var liveCompactScript = await File.ReadAllTextAsync(Path.Combine(assets, "live-compact.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(liveCompactScript);
             var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");

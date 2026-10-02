@@ -57,6 +57,7 @@ jobs:
         run: |
           node --check src/IPTVExplorer.Desktop/ui/app.js
           node --check src/IPTVExplorer.Desktop/ui/favorites.js
+          node --check src/IPTVExplorer.Desktop/ui/live-compact.js
 
       - name: Test passive artwork and catalog DOM (no network)
         run: node --test tests/ui/home-artwork.test.cjs tests/ui/home-backdrop.test.cjs tests/ui/catalog-cache.test.cjs tests/ui/catalog-selector.test.cjs tests/ui/media-actions.test.cjs tests/ui/theme-onboarding.test.cjs tests/ui/version-ui.test.cjs
