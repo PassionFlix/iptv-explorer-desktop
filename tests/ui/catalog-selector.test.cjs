@@ -1,4 +1,4 @@
-// Local source/DOM regressions for the Live category selector. No WebView or network.
+// Local source/DOM regressions for the Live category selector and tools. No WebView or network.
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
@@ -30,4 +30,26 @@ test('provider changes clear catalog models before the next selector load', () =
 
 test('Live playback forwards the safe category id for targeted Stalker command recovery', () => {
   assert.match(app, /categoryId: item\.categoryId/);
+});
+
+test('Live page exposes the manual Stalker refresh without introducing another provider call path', () => {
+  assert.match(app, /ensureLiveRefreshControls/);
+  assert.match(app, /live-refresh-catalog/);
+  assert.match(app, /button\('Actualiser le Live', 'secondary', refreshCatalogManual\)/);
+  assert.match(app, /live-refreshed-at/);
+  assert.match(app, /rpc\('catalog\.refresh', \{ providerKey: provider\.key \}\)/);
+});
+
+test('Live entries use numeric id ordering with title fallback and display the id', () => {
+  assert.match(app, /function compareLiveItems\(left, right\)/);
+  assert.match(app, /Number\.MAX_SAFE_INTEGER/);
+  assert.match(app, /localeCompare\(String\(right\.title/);
+  assert.match(app, /catalog === 'live' \? \[\.\.\.items\]\.sort\(compareLiveItems\) : items/);
+  assert.match(app, /`#\$\{item\.id\} · \$\{item\.title\}`/);
+});
+
+test('provider diagnostic counts are explicitly labelled as category counts', () => {
+  assert.match(app, /'Catégories Live'/);
+  assert.match(app, /'Catégories Films'/);
+  assert.match(app, /'Catégories Séries'/);
 });

@@ -15,11 +15,25 @@ public partial class MainWindow : Window
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly BridgeRouter _bridge;
     private readonly MediaActionBridge _mediaActions;
+    private readonly FavoriteBridge _favorites;
+    private readonly ProviderSecretBridge _providerSecrets;
+    private readonly CatalogStatsBridge _catalogStats;
+    private readonly CategoryHierarchyBridge _categoryHierarchy;
 
-    public MainWindow(BridgeRouter bridge, MediaActionBridge mediaActions)
+    public MainWindow(
+        BridgeRouter bridge,
+        MediaActionBridge mediaActions,
+        FavoriteBridge favorites,
+        ProviderSecretBridge providerSecrets,
+        CatalogStatsBridge catalogStats,
+        CategoryHierarchyBridge categoryHierarchy)
     {
         _bridge = bridge;
         _mediaActions = mediaActions;
+        _favorites = favorites;
+        _providerSecrets = providerSecrets;
+        _catalogStats = catalogStats;
+        _categoryHierarchy = categoryHierarchy;
         InitializeComponent();
         Loaded += FitWindowToWorkArea;
         Loaded += InitializeWebViewAsync;
@@ -65,6 +79,16 @@ public partial class MainWindow : Window
 
             var mediaActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "media-actions.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
+            var favoritesScript = await File.ReadAllTextAsync(Path.Combine(assets, "favorites.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(favoritesScript);
+            var liveCompactScript = await File.ReadAllTextAsync(Path.Combine(assets, "live-compact.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(liveCompactScript);
+            var providerNativeActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "provider-native-actions.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(providerNativeActionsScript);
+            var diagnosticStatsScript = await File.ReadAllTextAsync(Path.Combine(assets, "diagnostic-local-stats.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(diagnosticStatsScript);
+            var categoryHierarchyScript = await File.ReadAllTextAsync(Path.Combine(assets, "category-hierarchy.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(categoryHierarchyScript);
             var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
@@ -150,7 +174,12 @@ public partial class MainWindow : Window
     {
         var message = e.WebMessageAsJson;
         if (message.Length > 2_000_000) return;
-        var response = await _mediaActions.TryHandleAsync(message) ?? await _bridge.HandleAsync(message);
+        var response = await _providerSecrets.TryHandleAsync(message)
+            ?? await _catalogStats.TryHandleAsync(message)
+            ?? await _categoryHierarchy.TryHandleAsync(message)
+            ?? await _favorites.TryHandleAsync(message)
+            ?? await _mediaActions.TryHandleAsync(message)
+            ?? await _bridge.HandleAsync(message);
         Browser.CoreWebView2.PostWebMessageAsJson(response);
     }
 }

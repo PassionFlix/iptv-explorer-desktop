@@ -31,7 +31,9 @@ public partial class App : Application
             builder.Services.AddSingleton<DatabaseInitializer>();
             builder.Services.AddSingleton<ISecretStore, DpapiSecretStore>();
             builder.Services.AddSingleton<ProviderRepository>();
-            builder.Services.AddSingleton<IProviderRepository>(sp => sp.GetRequiredService<ProviderRepository>());
+            builder.Services.AddSingleton<CategoryHierarchyRepository>();
+            builder.Services.AddSingleton<HierarchyProviderRepository>();
+            builder.Services.AddSingleton<IProviderRepository>(sp => sp.GetRequiredService<HierarchyProviderRepository>());
             builder.Services.AddSingleton<IAppSettingsRepository, AppSettingsRepository>();
             builder.Services.AddSingleton<RebuildJobRepository>();
             builder.Services.AddSingleton<AtomicSearchIndex>();
@@ -47,6 +49,8 @@ public partial class App : Application
             builder.Services.AddSingleton<MediaDetailService>();
             builder.Services.AddSingleton<PlaybackHistoryRepository>();
             builder.Services.AddSingleton<IPlaybackHistoryRepository>(sp => sp.GetRequiredService<PlaybackHistoryRepository>());
+            builder.Services.AddSingleton<FavoriteRepository>();
+            builder.Services.AddSingleton<LocalCatalogStatsRepository>();
             builder.Services.AddSingleton<IRemoteProviderClientFactory, ProviderClientFactory>();
             builder.Services.AddSingleton<IProviderClientFactory, LocalProviderClientFactory>();
             // Only explicit setup/settings operations receive the remote factory.
@@ -61,6 +65,11 @@ public partial class App : Application
             builder.Services.AddSingleton<BridgeRouter>();
             builder.Services.AddSingleton<MediaDownloadManager>();
             builder.Services.AddSingleton<MediaActionBridge>();
+            builder.Services.AddSingleton<FavoriteBridge>();
+            builder.Services.AddSingleton<CatalogStatsBridge>();
+            builder.Services.AddSingleton<CategoryHierarchyBridge>();
+            builder.Services.AddSingleton<INativeSecretPresenter, NativeSecretPresenter>();
+            builder.Services.AddSingleton<ProviderSecretBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
             builder.Services.AddHttpClient("providers", ProviderHttpRegistration.Configure)
                 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -84,7 +93,11 @@ public partial class App : Application
             await _host.StartAsync();
             var window = new MainWindow(
                 _host.Services.GetRequiredService<BridgeRouter>(),
-                _host.Services.GetRequiredService<MediaActionBridge>());
+                _host.Services.GetRequiredService<MediaActionBridge>(),
+                _host.Services.GetRequiredService<FavoriteBridge>(),
+                _host.Services.GetRequiredService<ProviderSecretBridge>(),
+                _host.Services.GetRequiredService<CatalogStatsBridge>(),
+                _host.Services.GetRequiredService<CategoryHierarchyBridge>());
             MainWindow = window;
             window.Show();
         }
