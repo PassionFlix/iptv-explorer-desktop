@@ -6,6 +6,8 @@
   let currentProvider = '';
   let currentRequestId = null;
   let currentItems = [];
+  let categories = [];
+  let selectedCategoryId = '';
   let renderGeneration = 0;
   const MAX_RENDERED_CHANNELS = 800;
 
@@ -29,8 +31,25 @@
     const request = pending.get(currentRequestId);
     pending.delete(currentRequestId);
     request?.reject(new DOMException('Superseded', 'AbortError'));
-    window.chrome.webview.postMessage({ id: `live-cancel-${Date.now()}-${++sequence}`, method: 'app.cancel', params: { requestId: currentRequestId } });
+    window.chrome.webview.postMessage({
+      id: `live-cancel-${Date.now()}-${++sequence}`,
+      method: 'app.cancel',
+      params: { requestId: currentRequestId }
+    });
     currentRequestId = null;
+  }
+
+  function activeProviderKey() {
+    return document.querySelector('#provider-select')?.value || '';
+  }
+
+  function setPageActive() {
+    window.iptvHome?.setActive(false);
+    document.querySelectorAll('.nav,.page').forEach(element => element.classList.remove('active'));
+    document.querySelector('.nav[data-page="live"]')?.classList.add('active');
+    document.querySelector('#live')?.classList.add('active');
+    const title = document.querySelector('#page-title');
+    if (title) title.textContent = 'Live';
   }
 
   function enhanceCard(card) {
@@ -54,19 +73,6 @@
       event.preventDefault();
       play.click();
     });
-  }
-
-  function activeProviderKey() {
-    return document.querySelector('#provider-select')?.value || '';
-  }
-
-  function setPageActive() {
-    window.iptvHome?.setActive(false);
-    document.querySelectorAll('.nav,.page').forEach(element => element.classList.remove('active'));
-    document.querySelector('.nav[data-page="live"]')?.classList.add('active');
-    document.querySelector('#live')?.classList.add('active');
-    const title = document.querySelector('#page-title');
-    if (title) title.textContent = 'Live';
   }
 
   function createChannelCard(item, providerKey, categoryId) {
@@ -128,8 +134,7 @@
     const empty = section?.querySelector('.empty-catalog');
     const filter = section?.querySelector('.live-channel-filter');
     const count = section?.querySelector('.live-channel-count');
-    const select = section?.querySelector('.category-select');
-    if (!grid || !empty || !select) return;
+    if (!grid || !empty) return;
 
     const query = (filter?.value || '').trim().toLocaleLowerCase();
     const filtered = currentItems
@@ -141,7 +146,7 @@
 
     if (count) {
       count.textContent = filtered.length > MAX_RENDERED_CHANNELS
-        ? `${visible.length.toLocaleString('fr-CA')} affichées sur ${filtered.length.toLocaleString('fr-CA')} · utilisez le filtre`
+        ? `${visible.length.toLocaleString('fr-CA')} affichées sur ${filtered.length.toLocaleString('fr-CA')}`
         : `${filtered.length.toLocaleString('fr-CA')} chaîne${filtered.length > 1 ? 's' : ''}`;
     }
 
@@ -154,7 +159,7 @@
 
     let index = 0;
     const providerKey = activeProviderKey();
-    const categoryId = select.value;
+    const categoryId = selectedCategoryId;
     const appendChunk = () => {
       if (generation !== renderGeneration) return;
       const fragment = document.createDocumentFragment();
@@ -182,6 +187,53 @@
     empty.classList.remove('hidden');
   }
 
+  function renderCategorySelector() {
+    const section = document.querySelector('#live');
+    const select = section?.querySelector('.category-select');
+    if (!select) return;
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Sélectionner une catégorie';
+    select.replaceChildren(placeholder);
+    for (const category of categories) {
+      const option = document.createElement('option');
+      option.value = String(category.id);
+      option.textContent = category.name || category.id;
+      option.selected = String(category.id) === selectedCategoryId;
+      select.append(option);
+    }
+  }
+
+  function renderCategoryRail() {
+    const section = document.querySelector('#live');
+    const list = section?.querySelector('.category-list');
+    const filter = section?.querySelector('.category-filter');
+    if (!list) return;
+    const query = (filter?.value || '').trim().toLocaleLowerCase();
+    list.replaceChildren();
+    categories
+      .filter(category => !query || String(category.name || '').toLocaleLowerCase().includes(query))
+      .slice(0, 200)
+      .forEach(category => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `category-button${String(category.id) === selectedCategoryId ? ' active' : ''}`;
+        button.textContent = category.name || category.id;
+        button.addEventListener('click', () => selectCategory(String(category.id)));
+        list.append(button);
+      });
+  }
+
+  function selectCategory(categoryId) {
+    if (!categoryId) return;
+    selectedCategoryId = categoryId;
+    renderCategorySelector();
+    renderCategoryRail();
+    const channelFilter = document.querySelector('#live .live-channel-filter');
+    if (channelFilter) channelFilter.value = '';
+    loadCategory(categoryId);
+  }
+
   async function loadCategory(categoryId) {
     const providerKey = activeProviderKey();
     const section = document.querySelector('#live');
@@ -200,7 +252,7 @@
     currentRequestId = request.id;
     try {
       const result = await request.promise;
-      if (currentRequestId !== request.id || activeProviderKey() !== providerKey) return;
+      if (currentRequestId !== request.id || activeProviderKey() !== providerKey || selectedCategoryId !== categoryId) return;
       currentItems = Array.isArray(result) ? result : [];
       renderChannels();
     } catch (error) {
@@ -213,49 +265,48 @@
 
   async function loadCategories(force = false) {
     const providerKey = activeProviderKey();
-    const select = document.querySelector('#live .category-select');
-    const empty = document.querySelector('#live .empty-catalog');
-    if (!select || !empty) return;
+    const section = document.querySelector('#live');
+    const empty = section?.querySelector('.empty-catalog');
+    if (!section || !empty) return;
 
     if (!providerKey) {
       currentProvider = '';
       currentItems = [];
-      select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'Aucun fournisseur actif' }));
+      categories = [];
+      selectedCategoryId = '';
+      renderCategorySelector();
+      renderCategoryRail();
       empty.textContent = 'Aucun fournisseur actif.';
       empty.classList.remove('hidden');
       return;
     }
 
-    if (!force && currentProvider === providerKey && select.options.length > 1) return;
+    if (!force && currentProvider === providerKey && categories.length) return;
     currentProvider = providerKey;
     currentItems = [];
+    categories = [];
+    selectedCategoryId = '';
     renderGeneration += 1;
-    document.querySelector('#live .catalog-grid')?.replaceChildren();
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Choisir un groupe';
-    select.replaceChildren(placeholder);
-    empty.textContent = 'Choisissez un groupe pour afficher les chaînes.';
+    section.querySelector('.catalog-grid')?.replaceChildren();
+    renderCategorySelector();
+    renderCategoryRail();
+    empty.textContent = 'Chargement des catégories…';
     empty.classList.remove('hidden');
 
     const { promise } = rpc('categories.list', { providerKey, catalogType: 'live' });
     try {
       const data = await promise;
       if (activeProviderKey() !== providerKey) return;
-      const categories = Array.isArray(data?.categories)
+      categories = Array.isArray(data?.categories)
         ? data.categories.filter(category => category.selected && category.present)
         : [];
-      for (const category of categories) {
-        const option = document.createElement('option');
-        option.value = String(category.id);
-        option.textContent = category.name || category.id;
-        select.append(option);
-      }
-      if (!categories.length) {
-        empty.textContent = 'Aucun groupe Live sélectionné.';
-      }
+      renderCategorySelector();
+      renderCategoryRail();
+      empty.textContent = categories.length
+        ? 'Sélectionnez une catégorie Live.'
+        : 'Aucune catégorie Live sélectionnée.';
     } catch (error) {
-      showLiveError(error.message || 'Impossible de charger les groupes Live.');
+      showLiveError(error.message || 'Impossible de charger les catégories Live.');
     }
   }
 
@@ -264,64 +315,48 @@
     const rail = section?.querySelector('.category-rail');
     const content = section?.querySelector('.catalog-content');
     const originalSelect = rail?.querySelector('.category-select');
+    const originalCategoryFilter = rail?.querySelector('.category-filter');
     const grid = content?.querySelector('.catalog-grid');
-    const loading = content?.querySelector('.loading-state');
-    const empty = content?.querySelector('.empty-catalog');
-    if (!section || !rail || !content || !originalSelect || !grid || !loading || !empty) return false;
+    if (!section || !rail || !content || !originalSelect || !originalCategoryFilter || !grid) return false;
 
     section.classList.add('live-browser-owned');
 
+    // Clone these two controls to remove the legacy app.js listeners. Live navigation is
+    // intentionally owned here so no category is auto-loaded on page entry.
     const select = originalSelect.cloneNode(true);
     originalSelect.replaceWith(select);
+    const categoryFilter = originalCategoryFilter.cloneNode(true);
+    originalCategoryFilter.replaceWith(categoryFilter);
+
     select.addEventListener('change', () => {
-      currentItems = [];
-      const filter = section.querySelector('.live-channel-filter');
-      if (filter) filter.value = '';
-      if (select.value) loadCategory(select.value);
-      else {
-        grid.replaceChildren();
-        empty.textContent = 'Choisissez un groupe pour afficher les chaînes.';
-        empty.classList.remove('hidden');
-      }
+      if (select.value) selectCategory(select.value);
     });
+    categoryFilter.placeholder = 'Filtrer les catégories';
+    categoryFilter.addEventListener('input', renderCategoryRail);
 
-    const oldFilter = rail.querySelector('.category-filter');
-    const oldList = rail.querySelector('.category-list');
-    oldFilter?.classList.add('hidden');
-    oldList?.classList.add('hidden');
+    if (!content.querySelector('.live-channel-tools')) {
+      const channelTools = document.createElement('div');
+      channelTools.className = 'live-channel-tools';
+      const head = document.createElement('div');
+      head.className = 'live-channel-tools-head';
+      head.innerHTML = '<strong>Chaînes</strong><span class="live-channel-count">0 chaîne</span>';
+      const channelFilter = document.createElement('input');
+      channelFilter.className = 'live-channel-filter';
+      channelFilter.type = 'search';
+      channelFilter.placeholder = 'Filtrer les chaînes';
+      let filterTimer = 0;
+      channelFilter.addEventListener('input', () => {
+        window.clearTimeout(filterTimer);
+        filterTimer = window.setTimeout(renderChannels, 80);
+      });
+      channelTools.append(head, channelFilter);
+      const refreshPanel = content.querySelector('#live-refresh-panel');
+      if (refreshPanel?.nextSibling) content.insertBefore(channelTools, refreshPanel.nextSibling);
+      else if (refreshPanel) content.append(channelTools);
+      else content.prepend(channelTools);
+    }
 
-    const channelTools = document.createElement('div');
-    channelTools.className = 'live-channel-tools';
-    const label = document.createElement('div');
-    label.className = 'live-channel-tools-head';
-    label.innerHTML = '<strong>Chaînes</strong><span class="live-channel-count">0 chaîne</span>';
-    const channelFilter = document.createElement('input');
-    channelFilter.className = 'live-channel-filter';
-    channelFilter.type = 'search';
-    channelFilter.placeholder = 'Filtrer les chaînes';
-    let filterTimer = 0;
-    channelFilter.addEventListener('input', () => {
-      window.clearTimeout(filterTimer);
-      filterTimer = window.setTimeout(renderChannels, 80);
-    });
-    channelTools.append(label, channelFilter);
-
-    rail.append(channelTools, loading, grid, empty);
-
-    const moveRefreshPanel = () => {
-      const panel = content.querySelector('#live-refresh-panel');
-      if (panel && panel.parentElement !== rail) rail.prepend(panel);
-      content.classList.toggle('hidden', content.children.length === 0);
-    };
-    moveRefreshPanel();
-    new MutationObserver(moveRefreshPanel).observe(content, { childList: true });
     return true;
-  }
-
-  async function activateLive() {
-    setPageActive();
-    if (!prepareLiveLayoutOnce()) return;
-    await loadCategories(false);
   }
 
   let layoutPrepared = false;
@@ -329,6 +364,12 @@
     if (layoutPrepared) return true;
     layoutPrepared = prepareLiveLayout();
     return layoutPrepared;
+  }
+
+  async function activateLive() {
+    setPageActive();
+    if (!prepareLiveLayoutOnce()) return;
+    await loadCategories(false);
   }
 
   function initialize() {
@@ -350,6 +391,8 @@
       cancelCurrentRequest();
       currentProvider = '';
       currentItems = [];
+      categories = [];
+      selectedCategoryId = '';
       renderGeneration += 1;
     });
   }
