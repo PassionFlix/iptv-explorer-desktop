@@ -11,6 +11,7 @@ public sealed class NativeVideoHost : HwndHost
     private const int WsVisible = 0x10000000;
     private const int WsClipSiblings = 0x04000000;
     private const int WsClipChildren = 0x02000000;
+    private const int SsBlackRect = 0x00000004;
     private nint _handle;
     private bool _cursorHidden;
     private ScreenPoint? _hiddenAt;
@@ -53,7 +54,7 @@ public sealed class NativeVideoHost : HwndHost
 
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
     {
-        _handle = CreateWindowExW(0, "STATIC", string.Empty, WsChild | WsVisible | WsClipSiblings | WsClipChildren,
+        _handle = CreateWindowExW(0, "STATIC", string.Empty, WsChild | WsVisible | WsClipSiblings | WsClipChildren | SsBlackRect,
             0, 0, 1, 1, hwndParent.Handle, 0, 0, 0);
         if (_handle == 0) throw new InvalidOperationException("Impossible de créer la surface vidéo native.");
         HandleReady?.Invoke(this, EventArgs.Empty);

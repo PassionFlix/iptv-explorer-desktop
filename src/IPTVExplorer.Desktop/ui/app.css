@@ -785,15 +785,17 @@ main {
 .category-select-label{display:block;margin-bottom:10px;color:var(--muted)}.category-select-label select{margin-top:6px}
 
 /* Live owns only the channel column in WebView; WPF owns the adjacent native player. */
-body.live-mode main{padding-left:24px;padding-right:0}
+body.live-mode main{padding-left:24px;padding-right:0;overflow-y:hidden;scrollbar-gutter:auto}
 body.live-mode .topbar{padding-right:16px}
 body.live-mode .top-actions .privacy{display:none}
-#live.live-browser.active{display:block;min-height:0;height:calc(100vh - 145px)}
-#live .live-channel-pane{display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;min-width:0;min-height:0;height:100%;border:1px solid var(--line);border-radius:15px;background:var(--panel);padding:13px}
-#live .live-channel-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+#live.live-browser.active{display:block;min-height:0;height:calc(100dvh - 145px);overflow:hidden}
+#live .live-channel-pane{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto minmax(0,1fr) auto;min-width:0;min-height:0;height:100%;border:1px solid var(--line);border-radius:15px;background:var(--panel);padding:13px}
+#live .live-channel-pane>*{grid-column:1}
+#live .category-select-label{width:100%}
+#live .live-channel-toolbar{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:end;gap:12px;margin-bottom:10px}
 #live .live-channel-toolbar .eyebrow{margin-bottom:3px}
 #live .live-channel-toolbar strong{font-size:12px;color:var(--muted)}
-#live-channel-filter{width:100%;margin:4px 0 10px}
+#live-channel-filter{width:100%;margin:0}
 #live .live-grid{display:block;grid-row:4;min-height:0;height:100%;overflow:auto;overscroll-behavior:contain}
 #live .live-card{display:flex;align-items:center;gap:10px;width:100%;height:52px;min-height:52px;margin:0 0 6px;padding:6px 8px;border-radius:9px;cursor:pointer;contain:layout paint}
 #live .live-card:hover,#live .live-card:focus-visible{transform:none;border-color:color-mix(in srgb,var(--accent) 58%,var(--line));background:var(--panel2);outline:none}
@@ -803,5 +805,5 @@ body.live-mode .top-actions .privacy{display:none}
 #live .live-channel-id{flex:0 0 auto;color:var(--muted);font-variant-numeric:tabular-nums}
 #live .live-card .favorite-toggle.compact{margin-left:auto;flex:0 0 auto}
 #live .live-virtual-spacer{width:1px;pointer-events:none}
-#live .loading-state,#live .empty-catalog{grid-row:4;padding:54px 16px}
+#live .loading-state,#live .empty-catalog{grid-row:4;align-self:center;padding:24px 16px}
 #live .loading-state:not(.hidden)+.live-grid{visibility:hidden}
