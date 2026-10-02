@@ -71,6 +71,13 @@ public partial class App : Application
                     AllowAutoRedirect = false,
                     UseCookies = false
                 });
+            builder.Services.AddHttpClient<IStalkerMediaProbe, StalkerMediaProbe>(client => client.Timeout = Timeout.InfiniteTimeSpan)
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    ConnectTimeout = TimeSpan.FromSeconds(3),
+                    AllowAutoRedirect = false,
+                    UseCookies = false
+                });
 
             _host = builder.Build();
             await _host.Services.GetRequiredService<DatabaseInitializer>().InitializeAsync();

@@ -73,6 +73,11 @@ public static partial class SafePlaybackDiagnosticData
     public static string HeaderNames(IReadOnlyDictionary<string, string>? headers) =>
         NameList(headers?.Keys);
 
+    public static string ContentType(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && SafeContentType().IsMatch(value)
+            ? value.ToLowerInvariant()
+            : "none";
+
     public static string CookieNames(IReadOnlyDictionary<string, string>? headers) =>
         headers?.Keys.Any(name => string.Equals(name, "Cookie", StringComparison.OrdinalIgnoreCase)) == true
             ? string.Join(',', ExpectedCookieNames)
@@ -96,4 +101,6 @@ public static partial class SafePlaybackDiagnosticData
     private static partial Regex SafeQueryName();
     [GeneratedRegex("^[A-Za-z0-9_-]{1,64}$", RegexOptions.CultureInvariant)]
     private static partial Regex SafeHeaderName();
+    [GeneratedRegex("^[A-Za-z0-9!#$&^_.+-]{1,40}/[A-Za-z0-9!#$&^_.+-]{1,40}$", RegexOptions.CultureInvariant)]
+    private static partial Regex SafeContentType();
 }

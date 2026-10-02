@@ -38,6 +38,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
     private readonly IPlayerService _player;
     private readonly IPlayerWindowManager _windows;
     private readonly IPlaybackDiagnosticTrace _trace;
+    private readonly IStalkerMediaProbe _mediaProbe;
     private readonly PlaybackProgressRecorder _recorder;
     private readonly object _resumeLock = new();
     private TimeSpan? _pendingResumePosition;
@@ -48,7 +49,8 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         IPlaybackHistoryRepository history,
         IPlayerService player,
         IPlayerWindowManager windows,
-        IPlaybackDiagnosticTrace? diagnosticTrace = null)
+        IPlaybackDiagnosticTrace? diagnosticTrace = null,
+        IStalkerMediaProbe? mediaProbe = null)
     {
         _providers = providers;
         _clients = clients;
@@ -56,6 +58,7 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
         _player = player;
         _windows = windows;
         _trace = diagnosticTrace ?? NullPlaybackDiagnosticTrace.Instance;
+        _mediaProbe = mediaProbe ?? NullStalkerMediaProbe.Instance;
         _recorder = new PlaybackProgressRecorder(history);
         _player.MediaLoaded += OnMediaLoaded;
         _player.PositionChanged += OnPositionChanged;
@@ -126,6 +129,13 @@ public sealed class PlaybackCoordinator : IAsyncDisposable
                 throw;
             }
             lock (_resumeLock) _pendingResumePosition = resumePosition is { } position && position > TimeSpan.Zero ? position : null;
+            if (provider.Type == ProviderType.Stalker && _mediaProbe.Enabled)
+            {
+                lock (_resumeLock) _pendingResumePosition = null;
+                _windows.ConfigureEpisodes(null, null);
+                await _mediaProbe.ProbeAsync(resolved, cancellationToken);
+                return new PlaybackOpenResult("probed", "Sonde média Stalker terminée.");
+            }
             TraceLoadRequest(provider.Type, reference.MediaType, playbackId, resolved);
             await _player.LoadAsync(resolved, renderHostHandle, cancellationToken);
 
