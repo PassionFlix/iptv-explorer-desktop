@@ -53,8 +53,11 @@ jobs:
       - name: Test
         run: dotnet test .\IPTVExplorer.Desktop.sln -c Release --no-build --logger "console;verbosity=normal"
 
+      - name: Check desktop UI JavaScript syntax
+        run: node --check src/IPTVExplorer.Desktop/ui/app.js
+
       - name: Test passive artwork and catalog DOM (no network)
-        run: node --test tests/ui/home-artwork.test.cjs tests/ui/home-backdrop.test.cjs tests/ui/catalog-cache.test.cjs tests/ui/media-actions.test.cjs tests/ui/theme-onboarding.test.cjs tests/ui/version-ui.test.cjs
+        run: node --test tests/ui/home-artwork.test.cjs tests/ui/home-backdrop.test.cjs tests/ui/catalog-cache.test.cjs tests/ui/catalog-selector.test.cjs tests/ui/media-actions.test.cjs tests/ui/theme-onboarding.test.cjs tests/ui/version-ui.test.cjs
 
       - name: Test changelog release tooling
         shell: pwsh
