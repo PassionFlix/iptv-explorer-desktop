@@ -38,10 +38,10 @@ test('manual Stalker refresh remains in Settings without a second Live control',
   assert.match(app, /rpc\('catalog\.refresh', \{ providerKey: provider\.key \}\)/);
 });
 
-test('Live entries display id and append bounded bridge pages', () => {
+test('Live entries display provider order with id fallback and append bounded bridge pages', () => {
   assert.match(app, /model\.liveItems\.push\(\.\.\.result\.items\)/);
   assert.match(app, /rpc\('catalog\.live\.page'/);
-  assert.match(app, /`#\$\{item\.id\}`/);
+  assert.match(app, /item\.providerOrder \?\? item\.id/);
 });
 
 test('provider diagnostic counts are explicitly labelled as category counts', () => {

@@ -249,7 +249,7 @@ public sealed class BridgeRouter(
     {
         var count = Math.Min(LivePageSize, items.Count - offset);
         var page = new object[count];
-        for (var index = 0; index < count; index++) page[index] = SafeItem(items[offset + index]);
+        for (var index = 0; index < count; index++) page[index] = SafeLiveItem(items[offset + index]);
         return new { snapshotId, items = page, total = items.Count, nextOffset = offset + count < items.Count ? offset + count : (int?)null };
     }
 
@@ -371,6 +371,7 @@ public sealed class BridgeRouter(
     private async Task<ProviderRecord> RequiredProvider(string key, CancellationToken cancellationToken) { if (!ProviderKey.IsValid(key)) throw new ArgumentException("Invalid provider key."); return await providers.GetAsync(key, cancellationToken) ?? throw new KeyNotFoundException("Provider was not found."); }
     private static object SafeProvider(ProviderRecord provider) => new { key = provider.Key, type = provider.Type.ToString().ToLowerInvariant(), name = provider.Name, serverUrl = provider.ServerUri.ToString().TrimEnd('/'), provider.Enabled, provider.Status };
     private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, parentId = category.ParentRemoteId, category.Selected, category.Present, category.NeedsReview };
+    private static object SafeLiveItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.CategoryId, providerOrder = item.ProviderOrder };
     private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating, item.CategoryId };
     private static bool IndexDirty(IEnumerable<CategorySummary> summaries) => summaries.Any(summary => summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.IndexDirty);
     private static string? SafeImage(string? value) => MediaArtwork.SafeImageUrl(value);

@@ -318,6 +318,9 @@
     const image = document.createElement('img'); image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.alt = ''; image.src = url; image.addEventListener('error', () => { image.remove(); holder.textContent = title.slice(0, 1).toUpperCase(); }, { once: true }); holder.append(image); return holder;
   }
   function compareLiveItems(left, right) {
+    const providerOrder = item => Number.isSafeInteger(Number(item?.providerOrder)) && item?.providerOrder !== null && item?.providerOrder !== '' ? Number(item.providerOrder) : Number.MAX_SAFE_INTEGER;
+    const leftOrder = providerOrder(left), rightOrder = providerOrder(right);
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
     const leftNumber = /^\d+$/.test(String(left.id ?? '')) ? Number(left.id) : Number.MAX_SAFE_INTEGER;
     const rightNumber = /^\d+$/.test(String(right.id ?? '')) ? Number(right.id) : Number.MAX_SAFE_INTEGER;
     if (leftNumber !== rightNumber) return leftNumber - rightNumber;
@@ -363,7 +366,7 @@
   }
   function renderLiveItems(model) {
     const filter = $('#live-channel-filter').value.trim().toLocaleLowerCase();
-    model.filteredLiveItems = model.liveItems.filter(item => !filter || String(item.id).toLocaleLowerCase().includes(filter) || String(item.title || '').toLocaleLowerCase().includes(filter)).sort(compareLiveItems);
+    model.filteredLiveItems = model.liveItems.filter(item => !filter || String(item.id).toLocaleLowerCase().includes(filter) || String(item.providerOrder ?? '').toLocaleLowerCase().includes(filter) || String(item.title || '').toLocaleLowerCase().includes(filter)).sort(compareLiveItems);
     const count = model.filteredLiveItems.length;
     $('#live-channel-count').textContent = `${count} chaîne${count === 1 ? '' : 's'}`;
     const grid = $('#live .live-grid'); grid.scrollTop = 0; queueLiveWindow(model);
@@ -386,7 +389,7 @@
     const reference = Object.freeze({ providerKey: state.activeProviderKey, mediaType: 'live', mediaId: item.id, extension: item.extension, categoryId: item.categoryId || model.categoryId });
     const card = node('article', 'media-card live-card live-row'); card.tabIndex = 0; card.setAttribute('role', 'button'); card.dataset.mediaId = String(item.id); card.dataset.title = String(item.title || ''); card.dataset.categoryId = String(reference.categoryId || '');
     const visual = imageOrPlaceholder(item.imageUrl, item.title, 'channel-logo');
-    const copy = node('span', 'live-channel-copy'); copy.append(node('small', 'live-channel-id', `#${item.id}`), node('strong', '', item.title));
+    const copy = node('span', 'live-channel-copy'); const displayNumber = item.providerOrder ?? item.id; copy.append(node('small', 'live-channel-id', `#${displayNumber}`), node('strong', '', item.title));
     const play = () => openPlayer(reference, item.title);
     card.addEventListener('click', event => { if (!event.target.closest('button')) play(); });
     card.addEventListener('keydown', event => { if (event.target.closest('button') || (event.key !== 'Enter' && event.key !== ' ')) return; event.preventDefault(); play(); });

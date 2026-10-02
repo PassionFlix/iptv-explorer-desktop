@@ -158,6 +158,7 @@ internal static class JsonSupport
                 .Select(field => item.Text(field)).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
             : item.Text("stream_icon", "cover", "screenshot_uri", "logo");
         var extension = item.Text("container_extension");
+        int? providerOrder = catalog == CatalogType.Live && int.TryParse(item.Text("num"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedOrder) && parsedOrder >= 0 ? parsedOrder : null;
         var year = item.Text("year", "releaseDate", "releasedate");
         double? rating = double.TryParse(item.Text("rating", "rating_5based", "kinopoisk_rating"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedRating) ? parsedRating : null;
         var added = new[] { "added", "added_at", "created_at" }
@@ -167,7 +168,7 @@ internal static class JsonSupport
         if (added is null && catalog == CatalogType.Series && useSeriesModifiedDate)
             added = ParseAddedAt(item.Text("last_modified"));
         return new CatalogItem(id, title, image, extension, item.Clone(), year, rating, added, Backdrop(item),
-            item.Text("category_id"), item.Text("plot", "description"), item.Text("genre"), item.Text("director"), item.Text("cast", "actors"), item.Text("duration", "duration_secs"));
+            item.Text("category_id"), item.Text("plot", "description"), item.Text("genre"), item.Text("director"), item.Text("cast", "actors"), item.Text("duration", "duration_secs"), providerOrder);
     }
 
     private static string? Backdrop(JsonElement item)

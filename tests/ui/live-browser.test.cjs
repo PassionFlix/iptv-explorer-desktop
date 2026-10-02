@@ -72,6 +72,13 @@ test('synthetic 1000-channel list keeps the DOM window bounded', () => {
   assert.ok(children.length < model.filteredLiveItems.length);
 });
 
+test('Xtream Live provider order takes priority over stream id', () => {
+  const context = {};
+  runInNewContext(productionFunction('compareLiveItems'), context);
+  const sorted = [{ id: '5', providerOrder: 2 }, { id: '50000', providerOrder: 1 }, { id: '2', providerOrder: 3 }].sort(context.compareLiveItems);
+  assert.deepEqual(sorted.map(item => item.providerOrder), [1, 2, 3]);
+});
+
 test('numeric Live IDs sort before title fallback', () => {
   const context = {};
   runInNewContext(productionFunction('compareLiveItems'), context);
