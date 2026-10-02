@@ -21,13 +21,18 @@ public sealed class BridgeRouter(
     IPlaybackHistoryRepository playbackHistory,
     ISecretStore secrets,
     PlaybackCoordinator playback,
+    IPlayerWindowManager playerWindows,
     ILogger<BridgeRouter> logger,
     CatalogSnapshotRepository snapshots,
     CatalogRefreshService catalogRefresh,
-    MediaDetailService details)
+    MediaDetailService details,
+    LiveChannelDisplayNameCache liveTitles)
 {
     private static readonly JsonSerializerOptions Json = CreateJson();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, IReadOnlyList<CatalogItem>> _liveSnapshots = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _liveSnapshotOrder = new();
+    private const int LivePageSize = 200;
 
     private static JsonSerializerOptions CreateJson()
     {
@@ -89,6 +94,7 @@ public sealed class BridgeRouter(
         "categories.list" => await CategoryList(Require<CategoryListRequest>(request), cancellationToken),
         "categories.save" => await CategorySave(Require<CategorySaveRequest>(request), cancellationToken),
         "catalog.live" => await LiveCatalog(Require<CatalogRequest>(request), cancellationToken),
+        "catalog.live.page" => LiveCatalogPage(Require<LivePageRequest>(request)),
         "catalog.vod.page" => await CatalogPage(Require<PagedCatalogRequest>(request), CatalogType.Vod, cancellationToken),
         "catalog.series.page" => await CatalogPage(Require<PagedCatalogRequest>(request), CatalogType.Series, cancellationToken),
         "catalog.vod.detail" => await VodDetail(Require<DetailRequest>(request), cancellationToken),
@@ -102,8 +108,15 @@ public sealed class BridgeRouter(
         "home.content" => await HomeContent(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "player.open" => await playback.OpenAsync(Require<MediaReference>(request), cancellationToken),
         "player.resume" => await ResumePlayback(Require<ResumeRequest>(request), cancellationToken),
+        "player.liveSurface" => await SetLiveSurface(Require<LiveSurfaceRequest>(request), cancellationToken),
         _ => throw new NotSupportedException("Unknown bridge method.")
     };
+
+    private async Task<object> SetLiveSurface(LiveSurfaceRequest input, CancellationToken cancellationToken)
+    {
+        await playerWindows.SetLiveSurfaceVisibleAsync(input.Visible, input.Top, cancellationToken);
+        return new { visible = input.Visible };
+    }
 
     private async Task<object> AppState(CancellationToken cancellationToken)
     {
@@ -212,7 +225,32 @@ public sealed class BridgeRouter(
     private async Task<object> LiveCatalog(CatalogRequest input, CancellationToken cancellationToken)
     {
         ValidateCategoryId(input.CategoryId); var client = await EnabledClient(input.ProviderKey, cancellationToken);
-        return (await client.GetLiveAsync(input.CategoryId, cancellationToken)).Select(SafeItem).ToArray();
+        var items = await client.GetLiveAsync(input.CategoryId, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        liveTitles.Store(input.ProviderKey, input.CategoryId, items);
+        var snapshotId = Guid.NewGuid().ToString("N");
+        _liveSnapshots[snapshotId] = items;
+        _liveSnapshotOrder.Enqueue(snapshotId);
+        while (_liveSnapshotOrder.Count > 3 && _liveSnapshotOrder.TryDequeue(out var oldId))
+            _liveSnapshots.TryRemove(oldId, out _);
+        return LivePage(snapshotId, items, 0);
+    }
+
+    private object LiveCatalogPage(LivePageRequest input)
+    {
+        if (!_liveSnapshots.TryGetValue(input.SnapshotId, out var items))
+            throw new InvalidOperationException("Live selection expired. Select the category again.");
+        if (input.Offset < 0 || input.Offset > items.Count)
+            throw new ArgumentOutOfRangeException(nameof(input.Offset));
+        return LivePage(input.SnapshotId, items, input.Offset);
+    }
+
+    private static object LivePage(string snapshotId, IReadOnlyList<CatalogItem> items, int offset)
+    {
+        var count = Math.Min(LivePageSize, items.Count - offset);
+        var page = new object[count];
+        for (var index = 0; index < count; index++) page[index] = SafeLiveItem(items[offset + index]);
+        return new { snapshotId, items = page, total = items.Count, nextOffset = offset + count < items.Count ? offset + count : (int?)null };
     }
 
     private async Task<object> CatalogPage(PagedCatalogRequest input, CatalogType catalog, CancellationToken cancellationToken)
@@ -279,12 +317,8 @@ public sealed class BridgeRouter(
         if (!string.Equals(preferences.ActiveProviderKey, providerKey, StringComparison.Ordinal)) throw new InvalidOperationException("The requested provider is not active.");
 
         var inProgress = await playbackHistory.ListInProgressAsync(providerKey, 6, cancellationToken);
-        var recentFilms = provider.Type == ProviderType.Xtream
-            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Vod, 20, cancellationToken)
-            : [];
-        var recentSeries = provider.Type == ProviderType.Xtream
-            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken)
-            : [];
+        var recentFilms = await search.RecentlyAddedAsync(providerKey, CatalogType.Vod, 20, cancellationToken);
+        var recentSeries = await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken);
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
         recentSeries = await artwork.ApplyCachedAsync(providerKey, secret, recentSeries, cancellationToken);
         object RecentItem(SearchHit item) => new
@@ -319,7 +353,7 @@ public sealed class BridgeRouter(
             recentlyAddedFilms = recentFilms.Select(RecentItem),
             recentlyAddedSeries = recentSeries.Select(RecentItem),
             backgroundImages = backgrounds,
-            recentSupported = provider.Type == ProviderType.Xtream
+            recentSupported = true
         };
     }
 
@@ -336,7 +370,8 @@ public sealed class BridgeRouter(
     }
     private async Task<ProviderRecord> RequiredProvider(string key, CancellationToken cancellationToken) { if (!ProviderKey.IsValid(key)) throw new ArgumentException("Invalid provider key."); return await providers.GetAsync(key, cancellationToken) ?? throw new KeyNotFoundException("Provider was not found."); }
     private static object SafeProvider(ProviderRecord provider) => new { key = provider.Key, type = provider.Type.ToString().ToLowerInvariant(), name = provider.Name, serverUrl = provider.ServerUri.ToString().TrimEnd('/'), provider.Enabled, provider.Status };
-    private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, category.Selected, category.Present, category.NeedsReview };
+    private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, parentId = category.ParentRemoteId, category.Selected, category.Present, category.NeedsReview };
+    private static object SafeLiveItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.CategoryId, providerOrder = item.ProviderOrder };
     private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating, item.CategoryId };
     private static bool IndexDirty(IEnumerable<CategorySummary> summaries) => summaries.Any(summary => summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.IndexDirty);
     private static string? SafeImage(string? value) => MediaArtwork.SafeImageUrl(value);
@@ -367,8 +402,10 @@ public sealed class BridgeRouter(
     private sealed record CategoryListRequest(string ProviderKey, string CatalogType);
     private sealed record CategorySaveRequest(string ProviderKey, string CatalogType, string Mode, string[] SelectedIds);
     private sealed record CatalogRequest(string ProviderKey, string CategoryId);
+    private sealed record LivePageRequest(string SnapshotId, int Offset);
     private sealed record PagedCatalogRequest(string ProviderKey, string CategoryId, int Page);
     private sealed record DetailRequest(string ProviderKey, string MediaId);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
     private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
+    private sealed record LiveSurfaceRequest(bool Visible, double Top = 0);
 }

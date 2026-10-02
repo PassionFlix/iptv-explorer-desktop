@@ -1,26 +1,13 @@
 (() => {
   'use strict';
 
-  let sequence = 0;
   let providers = [];
   let activeDiagnostic = null;
-  const pending = new Map();
   const stats = new Map();
 
   function rpc(method, params = {}) {
-    const id = `catalog-stats-${Date.now()}-${++sequence}`;
-    const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-    window.chrome.webview.postMessage({ id, method, params });
-    return promise;
+    return window.iptvRpc(method, params);
   }
-
-  window.chrome.webview.addEventListener('message', event => {
-    const response = event.data;
-    const request = pending.get(response?.id);
-    if (!request) return;
-    pending.delete(response.id);
-    response.ok ? request.resolve(response.result) : request.reject(new Error(response.error || 'Statistiques indisponibles'));
-  });
 
   function formatCount(value) {
     return Number.isFinite(Number(value)) ? Number(value).toLocaleString('fr-CA') : 'Non compté';

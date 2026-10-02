@@ -323,9 +323,9 @@ public sealed class SeriesArtworkTests
         public BridgeRouter CreateRouter() => new(Database.Repository, new LocalProviderClientFactory(Factory, Snapshots, Database.Repository), null!, null!,
             new AppSettingsRepository(Database.Connections), new RebuildJobRepository(Database.Connections),
             new SearchService(Database.Paths), new RecentSeriesArtwork(Cache), new PlaybackHistoryRepository(Database.Connections),
-            Secrets, null!, NullLogger<BridgeRouter>.Instance, Snapshots,
+            Secrets, null!, null!, NullLogger<BridgeRouter>.Instance, Snapshots,
             new CatalogRefreshService(Database.Repository, Factory, Secrets, Snapshots, new RebuildJobRepository(Database.Connections), TimeProvider.System),
-            new MediaDetailService(Factory, Snapshots, Secrets, new RecentSeriesArtwork(Cache)));
+            new MediaDetailService(Factory, Snapshots, Secrets, new RecentSeriesArtwork(Cache)), new LiveChannelDisplayNameCache());
         public Task IndexAsync(IEnumerable<SearchHit> documents) => new AtomicSearchIndex(Database.Paths).ReplaceAsync(Provider.Key, documents);
         public async Task<JsonElement> SendAsync(string method, string? mediaId = null)
         {

@@ -1,6 +1,6 @@
-# Checklist Release 1.1
+# Checklist Release 2.0
 
-Cette checklist doit être entièrement validée avant de créer le tag `v1.1.0`.
+Cette checklist doit être entièrement validée avant de créer le tag `v2.0.0`.
 
 ## 1. Source et sécurité
 
@@ -67,14 +67,14 @@ Préparer le runtime libmpv épinglé :
 Avec Inno Setup 6 installé :
 
 ```powershell
-.\scripts\Publish-Release.ps1 -Version 1.1.0 -BuildInstaller
+.\scripts\Publish-Release.ps1 -Version 2.0.0 -BuildInstaller
 ```
 
 Attendu :
 
 ```text
-dist\IPTV-Explorer-Setup-1.1.0-x64.exe
-dist\IPTV-Explorer-1.1.0-win-x64.zip
+dist\IPTV-Explorer-Setup-2.0.0-x64.exe
+dist\IPTV-Explorer-2.0.0-win-x64.zip
 dist\SHA256SUMS.txt
 ```
 
@@ -89,7 +89,7 @@ dist\SHA256SUMS.txt
 - [ ] Workflow CI vert.
 - [ ] Workflow `Windows Release` testé manuellement via `workflow_dispatch`.
 - [ ] Merge final sur `main`.
-- [ ] Tag `v1.1.0` créé depuis le commit validé.
+- [ ] Tag `v2.0.0` créé depuis le commit validé.
 - [ ] GitHub Release contient l'EXE, le ZIP et `SHA256SUMS.txt`.
 - [ ] Télécharger les artefacts de la Release et les tester une dernière fois.
 - [ ] Seulement ensuite : passer le dépôt de Private à Public.

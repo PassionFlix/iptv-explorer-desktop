@@ -6,28 +6,49 @@ Ce document s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-02
+
 ### Added
 
-- Sélecteur direct de catégorie au-dessus du filtre de la page Live.
+- Lecteur Live natif intégré directement dans la fenêtre principale, avec surface vidéo libmpv séparée du WebView2.
+- Plein écran Live vidéo-first avec barre de contrôle flottante, masquage automatique et réapparition au mouvement de la souris.
+- Écran de veille Live sombre et brandé, remplacé uniquement lorsque la lecture est réellement prête.
+- Favoris locaux pour le Live, les Films et les Séries, séparés par fournisseur.
+- Sélecteur direct de catégorie Live avec filtre de chaînes et liste virtualisée pour les gros bouquets.
 - Cache SQLite Live Stalker/MAG de six heures, actualisable explicitement depuis les paramètres.
-- Diagnostic fournisseur enrichi avec expiration, état sûr du compte, identité masquée et limites de connexions Xtream lorsqu’elles sont disponibles.
+- Diagnostic fournisseur enrichi avec expiration, état sûr du compte, identité masquée, statistiques locales et limites de connexions Xtream lorsqu’elles sont disponibles.
+- Affichage natif du MAC Stalker complet sur action explicite, sans exposition au WebView2.
+- Hiérarchie de catégories basée sur les vrais identifiants parent lorsqu’ils sont fournis par le fournisseur.
 
 ### Changed
 
-- Lecture Xtream avec un User-Agent média stable et arrêt du média précédent avant tout nouveau chargement.
+- Nouvelle expérience Live compacte : catégorie, recherche, chaînes et lecteur restent visibles dans la même vue.
+- Les chaînes Xtream Live respectent désormais l’ordre `num` fourni par `get_live_streams`, y compris les séparateurs et sous-groupes du bouquet.
+- Les chaînes Stalker conservent leur classement numérique par identifiant lorsqu’aucun ordre fournisseur n’existe.
 - Navigation Live Stalker servie depuis le cache persistant après la première synchronisation, sans nouveau bulk tant que le cache reste valide.
+- Lecture Xtream avec un User-Agent média stable et arrêt du média précédent avant tout nouveau chargement.
+- Accueil Stalker enrichi avec les nouveautés Films et Séries calculées depuis l’index local, sans scan fournisseur supplémentaire.
+- Libellés de diagnostic clarifiés afin de distinguer comptes, catégories et contenus indexés localement.
 
 ### Fixed
 
+- Gel de la page Live lors de certaines notifications de favoris et chargements de grosses catégories.
+- Pagination locale du catalogue Live afin d’éviter de saturer le thread UI avec de très grandes listes de chaînes.
+- Restauration des sections d’accueil pendant les rafraîchissements locaux sans effacer prématurément les contenus déjà affichés.
 - Chargement ciblé via `itv/get_ordered_list` des catégories Live Stalker absentes du bulk, sans analyse des autres catégories.
 - Réacquisition ciblée et uniquement en mémoire du `cmd` Stalker nécessaire à la lecture après un redémarrage.
 - Amélioration de la compatibilité avec certains portails Stalker/MAG nécessitant un profil de requête MAG complet.
-- Correction de la récupération des informations de compte et de la date d'expiration sur certains fournisseurs Stalker/MAG.
+- Correction de la récupération des informations de compte et de la date d’expiration sur certains fournisseurs Stalker/MAG.
 - Correction de l’extension proposée lors du téléchargement de médias Stalker dont l’URL de lecture passe par un script PHP.
+- Plein écran Live corrigé sur les configurations multi-écrans, avec restauration exacte du layout intégré à la sortie.
+- Suppression des scrollbars et placements inutiles lorsque le Live n’a aucune catégorie ou chaîne sélectionnée.
 
 ### Security
 
 - Les commandes brutes, MAC, tokens Stalker, `play_token` et URL média credentialisées restent exclus du cache Live persistant.
+- L’ordre Xtream `num` est conservé comme simple métadonnée locale sûre, sans conserver les réponses brutes ni les credentials.
+- Le Live intégré reçoit uniquement des références opaques côté JavaScript ; aucune URL média, Cookie ou en-tête d’authentification n’est exposé au WebView2.
+- Aucun nouvel appel fournisseur n’est déclenché par le tri, la recherche, les favoris ou la navigation dans les catégories Live.
 
 ## [1.1.0] - 2026-09-30
 

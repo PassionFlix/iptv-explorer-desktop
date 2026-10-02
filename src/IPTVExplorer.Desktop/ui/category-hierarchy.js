@@ -106,7 +106,7 @@
     stylesheet.href = 'category-hierarchy.css';
     document.head.append(stylesheet);
 
-    ['live', 'vod', 'series'].forEach(wireCatalog);
+    ['vod', 'series'].forEach(wireCatalog);
     const providerSelect = document.querySelector('#provider-select');
     activeProvider = providerSelect?.value || '';
     providerSelect?.addEventListener('change', () => {

@@ -25,6 +25,7 @@ public sealed class ProviderFixtureTests
         Assert.Single(await client.GetSeriesCategoriesAsync());
         var live = await client.GetAllLiveAsync();
         Assert.Equal("101", Assert.Single(live).Id);
+        Assert.Equal(7, Assert.Single(live).ProviderOrder);
         var vod = await client.GetAllVodAsync();
         Assert.Equal(2, vod.Count);
         Assert.Equal(8.4, vod[0].Rating);
@@ -499,7 +500,7 @@ public sealed class ProviderFixtureTests
                 "get_live_categories" => "[{\"category_id\":\"10\",\"category_name\":\"Live Fixture\"}]",
                 "get_vod_categories" => "[{\"category_id\":\"20\",\"category_name\":\"Films Fixture\"}]",
                 "get_series_categories" => "[{\"category_id\":\"30\",\"category_name\":\"Series Fixture\"}]",
-                "get_live_streams" => "[{\"stream_id\":101,\"name\":\"Fixture Channel\",\"stream_icon\":\"https://images.example.invalid/live.png\"}]",
+                "get_live_streams" => "[{\"num\":7,\"stream_id\":101,\"name\":\"Fixture Channel\",\"stream_icon\":\"https://images.example.invalid/live.png\"}]",
                 "get_vod_streams" => "[{\"stream_id\":201,\"name\":\"Fixture Film\",\"year\":\"2026\",\"rating\":\"8.4\",\"added\":\"1700000000\",\"container_extension\":\"mkv\",\"audio_tracks\":[\"fra\",\"eng\"]},{\"stream_id\":202,\"name\":\"Second Fixture\"}]",
                 "get_series" => "[{\"series_id\":301,\"name\":\"Fixture Series\",\"rating\":\"7.9\"}]",
                 "get_vod_info" => "{\"movie_data\":{\"stream_id\":201,\"name\":\"Fixture Film\",\"container_extension\":\"mkv\"},\"info\":{\"plot\":\"Fixture plot\",\"director\":\"Fixture Director\",\"cast\":\"Actor One\",\"genre\":\"Drama\",\"year\":\"2026\",\"rating\":\"8.4\"}}",

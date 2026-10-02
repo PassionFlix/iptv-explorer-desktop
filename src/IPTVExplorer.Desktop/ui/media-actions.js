@@ -1,27 +1,15 @@
 (() => {
   'use strict';
 
-  let sequence = 0;
   let currentVod = null;
   let currentSeries = null;
-  const pending = new Map();
 
   function rpc(method, params) {
-    const id = `media-${Date.now()}-${++sequence}`;
-    const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-    window.chrome.webview.postMessage({ id, method, params });
-    return promise;
+    return window.iptvRpc(method, params);
   }
 
   window.chrome.webview.addEventListener('message', event => {
     const response = event.data;
-    const request = pending.get(response?.id);
-    if (request) {
-      pending.delete(response.id);
-      response.ok ? request.resolve(response.result) : request.reject(new Error(response.error || 'Opération impossible'));
-      return;
-    }
-
     const result = response?.ok ? response.result : null;
     if (!result || typeof result !== 'object' || !('id' in result) || !('title' in result)) return;
 

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using IPTVExplorer.Core;
+using IPTVExplorer.Desktop;
 using IPTVExplorer.Infrastructure;
 using IPTVExplorer.Player;
 using IPTVExplorer.Providers;
@@ -9,6 +10,44 @@ namespace IPTVExplorer.Tests;
 
 public sealed class PlayerPhase3Tests
 {
+    [Fact]
+    public async Task LivePlaybackRoutesOpaqueReferenceThroughReferenceAwareSurface()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var provider = await database.AddProviderAsync(ProviderType.Stalker);
+        await database.Repository.SetEnabledAsync(provider.Key, true);
+        var player = new RecordingPlayerService();
+        var windows = new RecordingWindowManager((nint)4141);
+        var history = new PlaybackHistoryRepository(database.Connections);
+        var resolved = new ResolvedMedia(new Uri("https://media.example.invalid/live.ts"));
+        await using var coordinator = new PlaybackCoordinator(
+            database.Repository,
+            new SingleClientFactory(new ResolvedOnlyProviderClient(resolved)),
+            history,
+            player,
+            windows,
+            mediaProbe: new RecordingStalkerMediaProbe(enabled: false));
+        var reference = new MediaReference(provider.Key, CatalogType.Live, "live-42", Extension: "ts", CategoryId: "news");
+
+        await coordinator.OpenAsync(reference);
+
+        Assert.Same(reference, windows.LastReference);
+        Assert.Equal(1, windows.ReferenceAwareCalls);
+        Assert.Equal((nint)4141, player.RenderHostHandle);
+        Assert.Same(resolved, player.Media);
+    }
+
+    [Fact]
+    public void LiveDisplayNameCacheResolvesTitleWithoutSendingItFromJavaScript()
+    {
+        var cache = new LiveChannelDisplayNameCache();
+        cache.Store("fixture-provider", "news", [new CatalogItem("42", "Fixture News")]);
+
+        var title = cache.Find(new MediaReference("fixture-provider", CatalogType.Live, "42", CategoryId: "news"));
+
+        Assert.Equal("Fixture News", title);
+    }
+
     [Fact]
     public async Task PlaybackCoordinatorPassesNativeHandleWithoutReturningResolvedUrl()
     {
@@ -476,9 +515,17 @@ public sealed class PlayerPhase3Tests
     private sealed class RecordingWindowManager(nint handle) : IPlayerWindowManager
     {
         public nint Handle { get; private set; }
+        public MediaReference? LastReference { get; private set; }
+        public int ReferenceAwareCalls { get; private set; }
         public PlayerSeriesContext? SeriesContext { get; private set; }
         public Func<PlayerEpisodeOption, CancellationToken, Task>? EpisodeSelectionHandler { get; private set; }
         public Task<nint> ShowAsync(CancellationToken cancellationToken = default) { Handle = handle; return Task.FromResult(handle); }
+        public Task<nint> ShowAsync(MediaReference reference, CancellationToken cancellationToken = default)
+        {
+            LastReference = reference;
+            ReferenceAwareCalls++;
+            return ShowAsync(cancellationToken);
+        }
         public void ConfigureEpisodes(PlayerSeriesContext? context, Func<PlayerEpisodeOption, CancellationToken, Task>? selectionHandler)
         {
             SeriesContext = context;
