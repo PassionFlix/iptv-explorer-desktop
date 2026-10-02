@@ -63,7 +63,7 @@ jobs:
           node --check src/IPTVExplorer.Desktop/ui/category-hierarchy.js
 
       - name: Test passive artwork and catalog DOM (no network)
-        run: node --test tests/ui/home-artwork.test.cjs tests/ui/home-backdrop.test.cjs tests/ui/catalog-cache.test.cjs tests/ui/catalog-selector.test.cjs tests/ui/media-actions.test.cjs tests/ui/theme-onboarding.test.cjs tests/ui/version-ui.test.cjs
+        run: node --test tests/ui/home-artwork.test.cjs tests/ui/home-backdrop.test.cjs tests/ui/catalog-cache.test.cjs tests/ui/catalog-selector.test.cjs tests/ui/media-actions.test.cjs tests/ui/theme-onboarding.test.cjs tests/ui/version-ui.test.cjs tests/ui/todo-features.test.cjs
 
       - name: Test changelog release tooling
         shell: pwsh
