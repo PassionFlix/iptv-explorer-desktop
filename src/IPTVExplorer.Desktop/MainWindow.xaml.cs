@@ -15,11 +15,13 @@ public partial class MainWindow : Window
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly BridgeRouter _bridge;
     private readonly MediaActionBridge _mediaActions;
+    private readonly FavoriteBridge _favorites;
 
-    public MainWindow(BridgeRouter bridge, MediaActionBridge mediaActions)
+    public MainWindow(BridgeRouter bridge, MediaActionBridge mediaActions, FavoriteBridge favorites)
     {
         _bridge = bridge;
         _mediaActions = mediaActions;
+        _favorites = favorites;
         InitializeComponent();
         Loaded += FitWindowToWorkArea;
         Loaded += InitializeWebViewAsync;
@@ -65,6 +67,8 @@ public partial class MainWindow : Window
 
             var mediaActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "media-actions.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
+            var favoritesScript = await File.ReadAllTextAsync(Path.Combine(assets, "favorites.js"));
+            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(favoritesScript);
             var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
@@ -150,7 +154,9 @@ public partial class MainWindow : Window
     {
         var message = e.WebMessageAsJson;
         if (message.Length > 2_000_000) return;
-        var response = await _mediaActions.TryHandleAsync(message) ?? await _bridge.HandleAsync(message);
+        var response = await _favorites.TryHandleAsync(message)
+            ?? await _mediaActions.TryHandleAsync(message)
+            ?? await _bridge.HandleAsync(message);
         Browser.CoreWebView2.PostWebMessageAsJson(response);
     }
 }
