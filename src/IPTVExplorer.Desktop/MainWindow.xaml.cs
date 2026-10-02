@@ -15,7 +15,7 @@ namespace IPTVExplorer.Desktop;
 public partial class MainWindow : Window
 {
     private const string ReleasesPrefix = "https://github.com/PassionFlix/iptv-explorer-desktop/releases/";
-    private const double LiveBrowserWidth = 700;
+    private const double LiveBrowserWidth = 600;
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly BridgeRouter _bridge;
     private readonly MediaActionBridge _mediaActions;

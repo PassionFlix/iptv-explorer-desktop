@@ -317,12 +317,8 @@ public sealed class BridgeRouter(
         if (!string.Equals(preferences.ActiveProviderKey, providerKey, StringComparison.Ordinal)) throw new InvalidOperationException("The requested provider is not active.");
 
         var inProgress = await playbackHistory.ListInProgressAsync(providerKey, 6, cancellationToken);
-        var recentFilms = provider.Type == ProviderType.Xtream
-            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Vod, 20, cancellationToken)
-            : [];
-        var recentSeries = provider.Type == ProviderType.Xtream
-            ? await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken)
-            : [];
+        var recentFilms = await search.RecentlyAddedAsync(providerKey, CatalogType.Vod, 20, cancellationToken);
+        var recentSeries = await search.RecentlyAddedAsync(providerKey, CatalogType.Series, 20, cancellationToken);
         var secret = await secrets.GetAsync(provider.SecretReference, cancellationToken);
         recentSeries = await artwork.ApplyCachedAsync(providerKey, secret, recentSeries, cancellationToken);
         object RecentItem(SearchHit item) => new
@@ -357,7 +353,7 @@ public sealed class BridgeRouter(
             recentlyAddedFilms = recentFilms.Select(RecentItem),
             recentlyAddedSeries = recentSeries.Select(RecentItem),
             backgroundImages = backgrounds,
-            recentSupported = provider.Type == ProviderType.Xtream
+            recentSupported = true
         };
     }
 

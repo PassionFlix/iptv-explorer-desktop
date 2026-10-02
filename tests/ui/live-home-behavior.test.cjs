@@ -88,7 +88,7 @@ function liveFixture() {
     document: { createDocumentFragment: () => ({ fragment: true, children: [], append(item) { this.children.push(item); } }) },
     imageOrPlaceholder: () => node('div'), openPlayer() {}, Object, Math
   };
-  runInNewContext(['selectLiveCategory', 'renderLiveItems', 'queueLiveWindow', 'renderLiveWindow', 'createLiveRow'].map(name => source(name)).join('\n'), context);
+  runInNewContext(['compareLiveItems', 'selectLiveCategory', 'renderLiveItems', 'queueLiveWindow', 'renderLiveWindow', 'createLiveRow'].map(name => source(name)).join('\n'), context);
   return { context, state, model, grid, empty, loading, filter, section, calls, pending };
 }
 const items = count => Array.from({ length: count }, (_, index) => ({ id: String(index + 1), title: `Chaîne ${index + 1}`, categoryId: 'A' }));

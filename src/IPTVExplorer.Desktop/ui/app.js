@@ -363,7 +363,7 @@
   }
   function renderLiveItems(model) {
     const filter = $('#live-channel-filter').value.trim().toLocaleLowerCase();
-    model.filteredLiveItems = model.liveItems.filter(item => !filter || String(item.id).toLocaleLowerCase().includes(filter) || String(item.title || '').toLocaleLowerCase().includes(filter));
+    model.filteredLiveItems = model.liveItems.filter(item => !filter || String(item.id).toLocaleLowerCase().includes(filter) || String(item.title || '').toLocaleLowerCase().includes(filter)).sort(compareLiveItems);
     const count = model.filteredLiveItems.length;
     $('#live-channel-count').textContent = `${count} chaîne${count === 1 ? '' : 's'}`;
     const grid = $('#live .live-grid'); grid.scrollTop = 0; queueLiveWindow(model);
