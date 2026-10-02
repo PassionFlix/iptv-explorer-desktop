@@ -22,10 +22,10 @@ public sealed class PlayerWindowManager(IPlayerService player, LiveChannelDispla
         return _dispatcher.InvokeAsync(() => ShowForReferenceCoreAsync(reference, cancellationToken), DispatcherPriority.Normal, cancellationToken).Task.Unwrap();
     }
 
-    public Task SetLiveSurfaceVisibleAsync(bool visible, CancellationToken cancellationToken = default)
+    public Task SetLiveSurfaceVisibleAsync(bool visible, double top = 0, CancellationToken cancellationToken = default)
     {
-        if (_dispatcher.CheckAccess()) return SetLiveSurfaceVisibleCoreAsync(visible, cancellationToken);
-        return _dispatcher.InvokeAsync(() => SetLiveSurfaceVisibleCoreAsync(visible, cancellationToken), DispatcherPriority.Normal, cancellationToken).Task.Unwrap();
+        if (_dispatcher.CheckAccess()) return SetLiveSurfaceVisibleCoreAsync(visible, top, cancellationToken);
+        return _dispatcher.InvokeAsync(() => SetLiveSurfaceVisibleCoreAsync(visible, top, cancellationToken), DispatcherPriority.Normal, cancellationToken).Task.Unwrap();
     }
 
     public void ConfigureEpisodes(
@@ -61,11 +61,11 @@ public sealed class PlayerWindowManager(IPlayerService player, LiveChannelDispla
         return await ShowWindowCoreAsync(cancellationToken);
     }
 
-    private Task SetLiveSurfaceVisibleCoreAsync(bool visible, CancellationToken cancellationToken)
+    private Task SetLiveSurfaceVisibleCoreAsync(bool visible, double top, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (Application.Current.MainWindow is MainWindow main)
-            main.SetIntegratedLivePlayerVisible(visible, stopPlayback: !visible);
+            main.SetIntegratedLivePlayerVisible(visible, stopPlayback: !visible, top: top);
         return Task.CompletedTask;
     }
 

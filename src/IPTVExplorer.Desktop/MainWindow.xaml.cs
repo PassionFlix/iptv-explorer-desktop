@@ -15,7 +15,7 @@ namespace IPTVExplorer.Desktop;
 public partial class MainWindow : Window
 {
     private const string ReleasesPrefix = "https://github.com/PassionFlix/iptv-explorer-desktop/releases/";
-    private const double DefaultLivePlayerWidth = 480;
+    private const double LiveBrowserWidth = 700;
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly BridgeRouter _bridge;
     private readonly MediaActionBridge _mediaActions;
@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     private bool _liveSoftStopped;
     private bool _liveSurfaceActive;
     private bool _updatingLiveTracks;
-    private double _liveWindowedWidth = DefaultLivePlayerWidth;
+    private double _liveSurfaceTop = 100;
 
     public MainWindow(
         BridgeRouter bridge,
@@ -186,11 +186,15 @@ public partial class MainWindow : Window
     {
         var message = e.WebMessageAsJson;
         if (message.Length > 2_000_000) return;
+        string? method;
+        try { method = BridgeProtocol.Parse(message).Method; }
+        catch (FormatException) { method = null; }
+        var isLiveCatalog = method is "catalog.live" or "catalog.live.page";
         var response = await _providerSecrets.TryHandleAsync(message)
             ?? await _catalogStats.TryHandleAsync(message)
             ?? await _favorites.TryHandleAsync(message)
             ?? await _mediaActions.TryHandleAsync(message)
-            ?? await _bridge.HandleAsync(message);
+            ?? (isLiveCatalog ? await Task.Run(() => _bridge.HandleAsync(message)) : await _bridge.HandleAsync(message));
         Browser.CoreWebView2.PostWebMessageAsJson(response);
     }
 
@@ -210,19 +214,24 @@ public partial class MainWindow : Window
         return await _liveRenderHandle.Task.WaitAsync(cancellationToken);
     }
 
-    internal void SetIntegratedLivePlayerVisible(bool visible, bool stopPlayback)
+    internal void SetIntegratedLivePlayerVisible(bool visible, bool stopPlayback, double top = 0)
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(() => SetIntegratedLivePlayerVisible(visible, stopPlayback));
+            Dispatcher.Invoke(() => SetIntegratedLivePlayerVisible(visible, stopPlayback, top));
             return;
         }
 
         if (visible)
         {
+            if (double.IsFinite(top) && top > 0) _liveSurfaceTop = Math.Clamp(top, 0, 300);
+            LivePlayerPane.Margin = new Thickness(0, _liveSurfaceTop, 0, 0);
             LivePlayerPane.Visibility = Visibility.Visible;
             if (!_liveFullscreenBehavior.IsFullscreen)
-                LivePlayerColumn.Width = new GridLength(Math.Max(400, _liveWindowedWidth));
+            {
+                BrowserColumn.Width = new GridLength(LiveBrowserWidth);
+                LivePlayerColumn.Width = new GridLength(1, GridUnitType.Star);
+            }
             return;
         }
 
@@ -232,6 +241,7 @@ public partial class MainWindow : Window
         _liveSoftStopped = false;
         _liveState = PlayerState.Idle;
         LivePlayerPane.Visibility = Visibility.Collapsed;
+        BrowserColumn.Width = new GridLength(1, GridUnitType.Star);
         LivePlayerColumn.Width = new GridLength(0);
         LivePlayerTitle.Text = "Sélectionnez une chaîne";
         LiveStatusText.Text = "Prêt";
@@ -332,7 +342,6 @@ public partial class MainWindow : Window
         if (!_liveSurfaceActive || _liveFullscreenBehavior.IsFullscreen == fullscreen) return;
         if (fullscreen)
         {
-            if (LivePlayerColumn.ActualWidth > 0) _liveWindowedWidth = LivePlayerColumn.ActualWidth;
             if (!_liveFullscreenBehavior.Enter())
             {
                 LiveStatusText.Text = "Impossible d’activer le plein écran";
@@ -342,14 +351,16 @@ public partial class MainWindow : Window
             BrowserColumn.Width = new GridLength(0);
             LivePlayerColumn.Width = new GridLength(1, GridUnitType.Star);
             LivePlayerPane.BorderThickness = new Thickness(0);
+            LivePlayerPane.Margin = new Thickness(0);
             LiveFullscreenButton.Content = "Quitter";
         }
         else
         {
             BrowserHost.Visibility = Visibility.Visible;
-            BrowserColumn.Width = new GridLength(1, GridUnitType.Star);
-            LivePlayerColumn.Width = new GridLength(Math.Max(400, _liveWindowedWidth));
+            BrowserColumn.Width = new GridLength(LiveBrowserWidth);
+            LivePlayerColumn.Width = new GridLength(1, GridUnitType.Star);
             LivePlayerPane.BorderThickness = new Thickness(1, 0, 0, 0);
+            LivePlayerPane.Margin = new Thickness(0, _liveSurfaceTop, 0, 0);
             _ = _liveFullscreenBehavior.Exit();
             LiveFullscreenButton.Content = "Plein écran";
         }

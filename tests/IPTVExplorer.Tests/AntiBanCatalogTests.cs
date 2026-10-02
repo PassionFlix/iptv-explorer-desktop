@@ -50,7 +50,7 @@ public sealed class AntiBanCatalogTests
         await using var f = await Fixture.Create();
         await f.Refresh.EnsureSessionAsync(f.Provider.Key);
         for (var i = 0; i < 2; i++)
-            Assert.Single((await f.Rpc("catalog.live", new { providerKey = f.Provider.Key, categoryId = "1" })).EnumerateArray());
+            Assert.Single((await f.Rpc("catalog.live", new { providerKey = f.Provider.Key, categoryId = "1" })).GetProperty("items").EnumerateArray());
         foreach (var catalog in new[] { "vod", "series" })
             for (var i = 1; i <= 10; i++)
             {
@@ -70,6 +70,57 @@ public sealed class AntiBanCatalogTests
         await f.Rpc("index.queue");
         await f.RunIndex();
         Assert.Equal(Bulk, f.Http.Actions.ToArray());
+    }
+
+    [Fact]
+    public async Task LiveBridgePagesOneLocalRetrievalWithoutAdditionalProviderCalls()
+    {
+        await using var f = await Fixture.Create();
+        var channels = Enumerable.Range(1, 1000).Select(index => new CatalogItem(index.ToString(), $"Synthetic {index}", CategoryId: "1")).ToArray();
+        await f.Snapshots.ReplaceAsync(f.Provider.Key, new Dictionary<CatalogType, IReadOnlyList<CatalogItem>>
+        {
+            [CatalogType.Live] = channels,
+            [CatalogType.Vod] = [],
+            [CatalogType.Series] = []
+        }, null, f.Clock.Now);
+
+        var first = await f.Rpc("catalog.live", new { providerKey = f.Provider.Key, categoryId = "1" });
+        var snapshotId = first.GetProperty("snapshotId").GetString();
+        Assert.Equal(1000, first.GetProperty("total").GetInt32());
+        Assert.Equal(200, first.GetProperty("items").GetArrayLength());
+        var total = first.GetProperty("items").GetArrayLength();
+        var offset = first.GetProperty("nextOffset").GetInt32();
+        while (offset < channels.Length)
+        {
+            var next = await f.Rpc("catalog.live.page", new { snapshotId, offset });
+            total += next.GetProperty("items").GetArrayLength();
+            offset = next.GetProperty("nextOffset").ValueKind == JsonValueKind.Null
+                ? channels.Length : next.GetProperty("nextOffset").GetInt32();
+        }
+        Assert.Equal(channels.Length, total);
+        Assert.Empty(f.Http.Actions);
+    }
+
+    [Fact]
+    public async Task HomeBridgeReturnsProgressAndTwoRecentItemsPerCatalogFromLocalData()
+    {
+        await using var f = await Fixture.Create();
+        var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        await new PlaybackHistoryRepository(f.Database.Connections).UpsertAsync(new PlaybackProgress(
+            f.Provider.Key, CatalogType.Vod, "resume", null, "Continue synthetic", null, null, null,
+            "https://images.example.invalid/resume.jpg", null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(20), now));
+        await new AtomicSearchIndex(f.Database.Paths).ReplaceAsync(f.Provider.Key,
+            Enumerable.Range(1, 2).SelectMany(index => new[]
+            {
+                new SearchHit(f.Provider.Key, CatalogType.Vod, $"film-{index}", $"Film {index}", null, now.AddMinutes(index)),
+                new SearchHit(f.Provider.Key, CatalogType.Series, $"series-{index}", $"Series {index}", null, now.AddMinutes(index))
+            }));
+
+        var home = await f.Rpc("home.content");
+        Assert.Single(home.GetProperty("continueWatching").EnumerateArray());
+        Assert.Equal(2, home.GetProperty("recentlyAddedFilms").GetArrayLength());
+        Assert.Equal(2, home.GetProperty("recentlyAddedSeries").GetArrayLength());
+        Assert.Empty(f.Http.Actions);
     }
 
     [Theory]

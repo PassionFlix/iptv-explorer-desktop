@@ -30,6 +30,9 @@ public sealed class BridgeRouter(
 {
     private static readonly JsonSerializerOptions Json = CreateJson();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, IReadOnlyList<CatalogItem>> _liveSnapshots = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _liveSnapshotOrder = new();
+    private const int LivePageSize = 200;
 
     private static JsonSerializerOptions CreateJson()
     {
@@ -91,6 +94,7 @@ public sealed class BridgeRouter(
         "categories.list" => await CategoryList(Require<CategoryListRequest>(request), cancellationToken),
         "categories.save" => await CategorySave(Require<CategorySaveRequest>(request), cancellationToken),
         "catalog.live" => await LiveCatalog(Require<CatalogRequest>(request), cancellationToken),
+        "catalog.live.page" => LiveCatalogPage(Require<LivePageRequest>(request)),
         "catalog.vod.page" => await CatalogPage(Require<PagedCatalogRequest>(request), CatalogType.Vod, cancellationToken),
         "catalog.series.page" => await CatalogPage(Require<PagedCatalogRequest>(request), CatalogType.Series, cancellationToken),
         "catalog.vod.detail" => await VodDetail(Require<DetailRequest>(request), cancellationToken),
@@ -110,7 +114,7 @@ public sealed class BridgeRouter(
 
     private async Task<object> SetLiveSurface(LiveSurfaceRequest input, CancellationToken cancellationToken)
     {
-        await playerWindows.SetLiveSurfaceVisibleAsync(input.Visible, cancellationToken);
+        await playerWindows.SetLiveSurfaceVisibleAsync(input.Visible, input.Top, cancellationToken);
         return new { visible = input.Visible };
     }
 
@@ -222,8 +226,31 @@ public sealed class BridgeRouter(
     {
         ValidateCategoryId(input.CategoryId); var client = await EnabledClient(input.ProviderKey, cancellationToken);
         var items = await client.GetLiveAsync(input.CategoryId, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         liveTitles.Store(input.ProviderKey, input.CategoryId, items);
-        return items.Select(SafeItem).ToArray();
+        var snapshotId = Guid.NewGuid().ToString("N");
+        _liveSnapshots[snapshotId] = items;
+        _liveSnapshotOrder.Enqueue(snapshotId);
+        while (_liveSnapshotOrder.Count > 3 && _liveSnapshotOrder.TryDequeue(out var oldId))
+            _liveSnapshots.TryRemove(oldId, out _);
+        return LivePage(snapshotId, items, 0);
+    }
+
+    private object LiveCatalogPage(LivePageRequest input)
+    {
+        if (!_liveSnapshots.TryGetValue(input.SnapshotId, out var items))
+            throw new InvalidOperationException("Live selection expired. Select the category again.");
+        if (input.Offset < 0 || input.Offset > items.Count)
+            throw new ArgumentOutOfRangeException(nameof(input.Offset));
+        return LivePage(input.SnapshotId, items, input.Offset);
+    }
+
+    private static object LivePage(string snapshotId, IReadOnlyList<CatalogItem> items, int offset)
+    {
+        var count = Math.Min(LivePageSize, items.Count - offset);
+        var page = new object[count];
+        for (var index = 0; index < count; index++) page[index] = SafeItem(items[offset + index]);
+        return new { snapshotId, items = page, total = items.Count, nextOffset = offset + count < items.Count ? offset + count : (int?)null };
     }
 
     private async Task<object> CatalogPage(PagedCatalogRequest input, CatalogType catalog, CancellationToken cancellationToken)
@@ -378,9 +405,10 @@ public sealed class BridgeRouter(
     private sealed record CategoryListRequest(string ProviderKey, string CatalogType);
     private sealed record CategorySaveRequest(string ProviderKey, string CatalogType, string Mode, string[] SelectedIds);
     private sealed record CatalogRequest(string ProviderKey, string CategoryId);
+    private sealed record LivePageRequest(string SnapshotId, int Offset);
     private sealed record PagedCatalogRequest(string ProviderKey, string CategoryId, int Page);
     private sealed record DetailRequest(string ProviderKey, string MediaId);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
     private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
-    private sealed record LiveSurfaceRequest(bool Visible);
+    private sealed record LiveSurfaceRequest(bool Visible, double Top = 0);
 }

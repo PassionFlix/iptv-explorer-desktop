@@ -26,7 +26,7 @@ public interface IPlayerWindowManager
     Task<nint> ShowAsync(MediaReference reference, CancellationToken cancellationToken = default) =>
         ShowAsync(cancellationToken);
 
-    Task SetLiveSurfaceVisibleAsync(bool visible, CancellationToken cancellationToken = default) =>
+    Task SetLiveSurfaceVisibleAsync(bool visible, double top = 0, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
     void ConfigureEpisodes(

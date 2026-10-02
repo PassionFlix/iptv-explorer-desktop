@@ -70,7 +70,8 @@
 
   function updateFavoriteButton(button) {
     const selected = favorites.has(button.dataset.favoriteKey || '');
-    button.textContent = selected ? '★' : '☆';
+    const label = selected ? '★' : '☆';
+    if (button.textContent !== label) button.textContent = label;
     button.classList.toggle('is-favorite', selected);
     button.setAttribute('aria-pressed', String(selected));
     button.title = selected ? 'Retirer des favoris' : 'Ajouter aux favoris';
@@ -272,7 +273,11 @@
       } else {
         const play = actionButton('▶ Lire', 'primary');
         play.addEventListener('click', async () => {
-          try { await rpc('player.open', { providerKey: item.providerKey, mediaType: item.mediaType, mediaId: item.mediaId, extension: item.extension, categoryId: item.categoryId, title: item.title, posterUrl: item.imageUrl }); }
+          const reference = item.mediaType === 'live'
+            ? { providerKey: item.providerKey, mediaType: 'live', mediaId: item.mediaId, categoryId: item.categoryId, ...(item.extension ? { extension: item.extension } : {}) }
+            : { providerKey: item.providerKey, mediaType: item.mediaType, mediaId: item.mediaId, extension: item.extension, categoryId: item.categoryId, title: item.title, posterUrl: item.imageUrl };
+          if (item.mediaType === 'live') window.iptvNavigate('live');
+          try { await rpc('player.open', reference); }
           catch (error) { showToast(error.message, true); }
         });
         actions.append(play);

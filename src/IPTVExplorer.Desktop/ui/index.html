@@ -81,6 +81,8 @@
             </div>
           </section>
 
+          <p id="home-media-error" class="form-error hidden" role="status"></p>
+
           <section id="continue-watching" class="home-media-section hidden">
             <div class="home-media-heading"><p class="eyebrow">REPRENDRE</p><h2>Continuer à regarder</h2></div>
             <div id="continue-watching-items" class="home-media-grid"></div>
@@ -107,12 +109,8 @@
       </section>
 
       <section id="live" class="page catalog-page live-browser" data-catalog="live">
-        <aside class="category-rail live-category-pane">
+        <section class="live-channel-pane" aria-label="Chaînes Live">
           <label class="category-select-label">Catégorie<select class="category-select" aria-label="Catégorie Live"><option value="">Sélectionner une catégorie</option></select></label>
-          <input class="category-filter" type="search" placeholder="Filtrer les catégories">
-          <div class="category-list"></div>
-        </aside>
-        <section class="catalog-content live-channel-pane" aria-label="Chaînes Live">
           <div class="live-channel-toolbar">
             <div><p class="eyebrow">CHAÎNES</p><strong id="live-channel-count">Aucune catégorie</strong></div>
             <input id="live-channel-filter" type="search" placeholder="Filtrer les chaînes" aria-label="Filtrer les chaînes Live" disabled>

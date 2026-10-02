@@ -8,6 +8,7 @@
   const catalogSessions = new Set();
   let catalogRefreshBusy = false;
   let completedIndex = null;
+  let displayedHomeProvider = null;
 
   function rawPost(method, params) {
     const id = `ui-${++sequence}`;
@@ -51,17 +52,6 @@
     else document.documentElement.removeAttribute('data-theme');
   }
 
-  function ensureLiveRefreshControls() {
-    const content = $('#live .catalog-content');
-    if (!content || $('#live-refresh-panel')) return;
-    const panel = node('div', 'panel panel-head'); panel.id = 'live-refresh-panel';
-    const copy = node('div');
-    copy.append(node('p', 'eyebrow', 'LIVE LOCAL'), node('p', 'muted', 'Dernière actualisation Live : jamais'));
-    copy.lastChild.id = 'live-refreshed-at';
-    const refresh = button('Actualiser le Live', 'secondary', refreshCatalogManual); refresh.id = 'live-refresh-catalog';
-    panel.append(copy, refresh); content.prepend(panel);
-  }
-
   async function refreshApp(goHome = false) {
     state.app = await rpc('app.getState');
     state.activeProviderKey = state.app.activeProviderKey;
@@ -84,18 +74,15 @@
   async function loadCatalogStatus(preserveState = false) {
     const provider = activeProvider();
     const stalker = provider?.type === 'stalker';
-    const settingsRefresh = $('#refresh-catalog'), liveRefresh = $('#live-refresh-catalog'), livePanel = $('#live-refresh-panel');
+    const settingsRefresh = $('#refresh-catalog');
     if (settingsRefresh) { settingsRefresh.disabled = catalogRefreshBusy || !provider; settingsRefresh.textContent = stalker ? 'Actualiser le Live' : 'Actualiser le catalogue'; }
-    if (liveRefresh) liveRefresh.disabled = catalogRefreshBusy || !provider || !stalker;
-    if (livePanel) livePanel.classList.toggle('hidden', !stalker);
     $('#catalog-snapshot-kind').textContent = stalker ? 'LIVE STALKER' : 'CATALOGUE XTREAM';
-    if (!provider) { $('#catalog-refreshed-at').textContent = 'Aucun fournisseur actif.'; if ($('#live-refreshed-at')) $('#live-refreshed-at').textContent = 'Aucun fournisseur actif.'; return; }
+    if (!provider) { $('#catalog-refreshed-at').textContent = 'Aucun fournisseur actif.'; return; }
     try {
       const status = await rpc('catalog.status', { providerKey: provider.key });
       if (state.activeProviderKey !== provider.key) return;
       const refreshedLabel = `${stalker ? 'Dernière actualisation Live' : 'Dernière actualisation'} : ${status.refreshedAt ? new Date(status.refreshedAt).toLocaleString() : 'jamais'}`;
       $('#catalog-refreshed-at').textContent = refreshedLabel;
-      if ($('#live-refreshed-at')) $('#live-refreshed-at').textContent = refreshedLabel;
       if (!preserveState) $('#catalog-refresh-state').textContent = stalker
           ? 'Navigation Live locale. Cache valide 6 heures ; aucune analyse catégorie par catégorie.'
           : 'Navigation locale. Actualisation automatique au plus une fois par session, avec un délai de 30 minutes.';
@@ -117,7 +104,7 @@
   async function refreshCatalogManual() {
     const provider = activeProvider();
     if (!provider || catalogRefreshBusy) return;
-    catalogRefreshBusy = true; $('#refresh-catalog').disabled = true; if ($('#live-refresh-catalog')) $('#live-refresh-catalog').disabled = true;
+    catalogRefreshBusy = true; $('#refresh-catalog').disabled = true;
     if (provider.type === 'xtream') catalogSessions.add(provider.key);
     $('#catalog-refresh-state').textContent = provider.type === 'stalker'
       ? 'Actualisation volontaire du Live…'
@@ -143,11 +130,12 @@
     cancelGroup('view'); cancelGroup('detail'); cancelGroup('home-content');
     if (page !== 'live') cancelGroup('live-catalog');
     state.page = page;
+    document.body.classList.toggle('live-mode', page === 'live');
     window.iptvHome.setActive(page === 'home');
     $$('.nav,.page').forEach(element => element.classList.remove('active'));
     $(`.nav[data-page="${page}"]`).classList.add('active');
     $(`#${page}`).classList.add('active'); $('#page-title').textContent = titles[page];
-    rpc('player.liveSurface', { visible: page === 'live' }, 'live-surface').catch(error => { if (!isAbort(error)) console.warn('Native Live surface unavailable.'); });
+    rpc('player.liveSurface', { visible: page === 'live', top: page === 'live' ? Math.max(0, $('#live').getBoundingClientRect().top) : 0 }, 'live-surface').catch(error => { if (!isAbort(error)) console.warn('Native Live surface unavailable.'); });
     if (page === 'home') renderHome();
     if (['live', 'vod', 'series'].includes(page)) loadCatalogShell(page);
     if (page === 'settings') { renderProviderSettings(); loadPreferences(); }
@@ -178,7 +166,7 @@
 
   async function renderHome() {
     const zero = $('#zero-state'), dashboard = $('#dashboard');
-    renderHomeMedia({});
+    if (displayedHomeProvider !== state.activeProviderKey) { renderHomeMedia({}); displayedHomeProvider = state.activeProviderKey; }
     if (!state.app || state.app.providerCount === 0) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); return; }
     if (!state.activeProviderKey) { zero.classList.remove('hidden'); dashboard.classList.add('hidden'); zero.querySelector('h2').textContent = 'Aucun fournisseur actif'; zero.querySelector('p').textContent = 'Activez un fournisseur depuis Paramètres → Fournisseurs.'; return; }
     zero.classList.add('hidden'); dashboard.classList.remove('hidden');
@@ -188,8 +176,11 @@
     $('#dashboard-status').className = 'status neutral';
     $('#dashboard-status').textContent = 'Chargement…';
     rpc('home.content', { providerKey: provider.key }, 'home-content')
-      .then(renderHomeMedia)
-      .catch(error => { if (!isAbort(error)) console.warn('Home media sections unavailable.'); });
+      .then(data => { if (state.activeProviderKey === provider.key && state.page === 'home') renderHomeMedia(data); })
+      .catch(error => { if (!isAbort(error) && state.activeProviderKey === provider.key && state.page === 'home') {
+        $('#home-media-error').textContent = 'Contenus de l’accueil indisponibles. Réessayez en revenant sur Accueil.';
+        $('#home-media-error').classList.remove('hidden');
+      } });
     try {
       const data = await rpc('providers.dashboard', { providerKey: provider.key }, 'view');
       $('#dashboard-status').className = 'status neutral'; $('#dashboard-status').textContent = provider.enabled ? 'Activé · état réseau non vérifié' : 'Désactivé';
@@ -202,6 +193,7 @@
   }
 
   function renderHomeMedia(data) {
+    $('#home-media-error').classList.add('hidden');
     renderContinueWatching(data?.continueWatching || []);
     renderRecentlyAdded(data?.recentlyAddedFilms || [], 'vod', 'recent-films');
     renderRecentlyAdded(data?.recentlyAddedSeries || [], 'series', 'recent-series');
@@ -254,7 +246,7 @@
   }
 
   async function loadCatalogShell(catalog) {
-    const section = $(`#${catalog}`), list = section.querySelector('.category-list'); list.replaceChildren();
+    const section = $(`#${catalog}`), list = section.querySelector('.category-list'); if (list) list.replaceChildren();
     section.querySelector('.catalog-grid').replaceChildren(); section.querySelector('.empty-catalog').classList.remove('hidden');
     section.querySelector('.empty-catalog').textContent = `Sélectionnez une catégorie ${catalog === 'live' ? 'Live' : catalog === 'vod' ? 'Films' : 'Séries'}.`;
     const categorySelect = section.querySelector('.category-select'); if (categorySelect) categorySelect.replaceChildren(Object.assign(node('option', '', 'Sélectionner une catégorie'), { value: '' }));
@@ -265,7 +257,7 @@
       const selected = data.categories.filter(category => category.selected && category.present);
       state.catalogs.set(catalog, { categories: selected, hierarchyCategories: data.categories, categoryId: null, page: 1, totalPages: 1, requestVersion: 0, loadingKey: null, loadingPromise: null, liveItems: [], filteredLiveItems: [], liveRenderFrame: 0 });
       renderCatalogSelector(catalog);
-      renderCatalogCategories(catalog, '');
+      if (catalog !== 'live') renderCatalogCategories(catalog, '');
       if (selected.length && catalog !== 'live') selectCatalogCategory(catalog, selected[0].id);
       else section.querySelector('.empty-catalog').textContent = 'Aucune catégorie sélectionnée.';
       if (selected.length && catalog === 'live') section.querySelector('.empty-catalog').textContent = 'Sélectionnez une catégorie Live.';
@@ -340,7 +332,7 @@
     const model = state.catalogs.get('live'); if (!model) return;
     const providerKey = state.activeProviderKey, requestKey = `${providerKey}\u0000${categoryId}`;
     if (model.loadingKey === requestKey && model.loadingPromise) return model.loadingPromise;
-    model.categoryId = categoryId; model.page = 1; renderCatalogSelector('live'); renderCatalogCategories('live', $('#live .category-filter').value);
+    model.categoryId = categoryId; model.page = 1; renderCatalogSelector('live');
     const section = $('#live'), grid = section.querySelector('.live-grid'), empty = section.querySelector('.empty-catalog'), loading = section.querySelector('.loading-state');
     model.requestVersion += 1; const requestVersion = model.requestVersion;
     model.liveItems = []; model.filteredLiveItems = []; grid.replaceChildren(); empty.classList.add('hidden'); loading.classList.remove('hidden');
@@ -349,16 +341,24 @@
     const operation = rpc('catalog.live', { providerKey, categoryId }, 'live-catalog');
     model.loadingKey = requestKey; model.loadingPromise = operation;
     try {
-      const items = await operation;
-      if (state.page !== 'live' || state.activeProviderKey !== providerKey || model.requestVersion !== requestVersion || model.categoryId !== categoryId) return;
-      model.liveItems = [...items].sort(compareLiveItems); model.filteredLiveItems = model.liveItems; filter.disabled = false;
-      renderLiveItems(model);
-      if (!items.length) { empty.textContent = 'Aucune chaîne dans cette catégorie.'; empty.classList.remove('hidden'); }
+      let result = await operation;
+      while (true) {
+        if (state.page !== 'live' || state.activeProviderKey !== providerKey || model.requestVersion !== requestVersion || model.categoryId !== categoryId) return;
+        model.liveItems.push(...result.items);
+        filter.disabled = false;
+        renderLiveItems(model);
+        loading.classList.add('hidden');
+        if (result.total === 0) { empty.textContent = 'Aucune chaîne dans cette catégorie.'; empty.classList.remove('hidden'); }
+        if (result.nextOffset == null) break;
+        result = await rpc('catalog.live.page', { snapshotId: result.snapshotId, offset: result.nextOffset }, 'live-catalog');
+      }
     } catch (error) {
-      if (!isAbort(error) && model.requestVersion === requestVersion) { empty.textContent = error.message; empty.classList.remove('hidden'); }
+      if (!isAbort(error) && state.catalogs.get('live') === model && model.requestVersion === requestVersion) { empty.textContent = error.message; empty.classList.remove('hidden'); filter.disabled = false; }
     } finally {
-      if (model.requestVersion === requestVersion) loading.classList.add('hidden');
-      if (model.loadingKey === requestKey) { model.loadingKey = null; model.loadingPromise = null; }
+      if (state.catalogs.get('live') === model && model.requestVersion === requestVersion) {
+        loading.classList.add('hidden');
+        model.loadingKey = null; model.loadingPromise = null;
+      }
     }
   }
   function renderLiveItems(model) {
@@ -636,6 +636,5 @@
   $('#preferences-form').addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const preferences = { activeProviderKey: state.activeProviderKey, interfaceLanguage: form.elements.interfaceLanguage.value, theme: form.elements.theme.value, audioLanguage: form.elements.audioLanguage.value || 'auto', secondaryAudioLanguage: form.elements.secondaryAudioLanguage.value || 'auto', subtitleLanguage: form.elements.subtitleLanguage.value || 'auto', automaticForcedSubtitles: form.elements.automaticForcedSubtitles.checked }; try { await rpc('settings.save', preferences); applyThemePreference(preferences.theme); toast('Préférences enregistrées.'); } catch (error) { toast(error.message, true); } });
 
   $$('.close-dialog').forEach(value => value.addEventListener('click', () => value.closest('dialog').close()));
-  ensureLiveRefreshControls();
   refreshApp().then(loadPreferences).catch(error => toast(error.message, true));
 })();

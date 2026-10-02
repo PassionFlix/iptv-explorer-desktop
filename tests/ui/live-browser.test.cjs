@@ -35,12 +35,12 @@ test('rapid A then B supersedes A and stale results cannot render', () => {
 });
 
 test('Live to Home hides the native pane while Home media sections remain intact', () => {
-  assert.match(app, /rpc\('player\.liveSurface', \{ visible: page === 'live' \}/);
+  assert.match(app, /rpc\('player\.liveSurface', \{ visible: page === 'live', top:/);
   assert.match(app, /renderContinueWatching\(data\?\.continueWatching/);
   assert.match(app, /renderRecentlyAdded\(data\?\.recentlyAddedFilms/);
   assert.match(app, /renderRecentlyAdded\(data\?\.recentlyAddedSeries/);
   assert.doesNotMatch(css, /#live(?:\.live-browser)?\{display:(?:block|grid)/);
-  assert.match(css, /#live\.live-browser\.active\{display:grid/);
+  assert.match(css, /#live\.live-browser\.active\{display:block/);
 });
 
 test('Live player.open sends only an opaque reference and never media credentials', () => {

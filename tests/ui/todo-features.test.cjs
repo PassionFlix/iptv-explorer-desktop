@@ -78,6 +78,6 @@ test('category hierarchy uses persisted parent ids without title heuristics', ()
   assert.match(app, /category\?\.parentId/);
   assert.match(app, /trail\.has\(id\)/);
   assert.match(app, /hierarchyCategories: data\.categories/);
-  assert.match(appCss, /data-category-depth="1"/);
+  assert.match(app, /option\.dataset\.depth = String\(depth\)/);
   assert.doesNotMatch(app, /split\([^]*category\.name/);
 });
