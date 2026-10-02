@@ -37,13 +37,21 @@ test('favorites stay local, provider scoped, and expose Live Films Series tabs',
   assert.match(favoritesCss, /\.favorite-toggle/);
 });
 
-test('compact Live rows reuse the existing play action for click and keyboard', () => {
+test('Live keeps the category rail, waits for an explicit category, and renders compact channels', () => {
+  assert.match(liveCompact, /event\.stopImmediatePropagation\(\)/);
+  assert.match(liveCompact, /Sélectionnez une catégorie Live/);
+  assert.match(liveCompact, /renderCategoryRail\(\)/);
+  assert.match(liveCompact, /className = `category-button/);
+  assert.match(liveCompact, /select\.addEventListener\('change'/);
+  assert.match(liveCompact, /rpc\('catalog\.live'/);
+  assert.match(liveCompact, /MAX_RENDERED_CHANNELS = 800/);
+  assert.match(liveCompact, /requestAnimationFrame\(appendChunk\)/);
+  assert.match(liveCompact, /className = 'live-channel-filter'/);
   assert.match(liveCompact, /play\.click\(\)/);
-  assert.match(liveCompact, /event\.key !== 'Enter'/);
-  assert.match(liveCompact, /event\.key !== ' '/);
-  assert.match(liveCompact, /event\.target\.closest\('button'\)/);
-  assert.match(liveCompactCss, /#live \.live-grid\{display:flex;flex-direction:column/);
-  assert.match(liveCompactCss, /min-height:54px/);
+  assert.match(liveCompactCss, /#live\.live-browser-owned\.active\{display:grid;grid-template-columns:240px minmax\(0,1fr\)/);
+  assert.match(liveCompactCss, /\.category-list\{height:540px;overflow:auto\}/);
+  assert.doesNotMatch(liveCompactCss, /\.category-list\{display:none!important\}/);
+  assert.doesNotMatch(liveCompactCss, /#live\.live-browser-owned\{display:block/);
 });
 
 test('full Stalker MAC action stays native and never reads the secret in JavaScript', () => {

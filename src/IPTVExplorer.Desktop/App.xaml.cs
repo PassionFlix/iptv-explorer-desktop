@@ -97,7 +97,8 @@ public partial class App : Application
                 _host.Services.GetRequiredService<FavoriteBridge>(),
                 _host.Services.GetRequiredService<ProviderSecretBridge>(),
                 _host.Services.GetRequiredService<CatalogStatsBridge>(),
-                _host.Services.GetRequiredService<CategoryHierarchyBridge>());
+                _host.Services.GetRequiredService<CategoryHierarchyBridge>(),
+                _host.Services.GetRequiredService<IPlayerService>());
             MainWindow = window;
             window.Show();
         }
