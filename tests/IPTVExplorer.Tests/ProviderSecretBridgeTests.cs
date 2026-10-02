@@ -17,8 +17,14 @@ public sealed class ProviderSecretBridgeTests
         var provider = await database.AddProviderAsync(ProviderType.Stalker, reference);
         var presenter = new RecordingPresenter();
         var bridge = new ProviderSecretBridge(database.Repository, secrets, presenter, NullLogger<ProviderSecretBridge>.Instance);
+        var request = JsonSerializer.Serialize(new
+        {
+            id = "m1",
+            method = "providers.showFullMac",
+            @params = new { providerKey = provider.Key }
+        });
 
-        var response = await bridge.TryHandleAsync($$"""{"id":"m1","method":"providers.showFullMac","params":{"providerKey":"{{provider.Key}}"}}""");
+        var response = await bridge.TryHandleAsync(request);
 
         Assert.NotNull(response);
         using var document = JsonDocument.Parse(response);
@@ -38,8 +44,14 @@ public sealed class ProviderSecretBridgeTests
         var provider = await database.AddProviderAsync(ProviderType.Xtream, reference);
         var presenter = new RecordingPresenter();
         var bridge = new ProviderSecretBridge(database.Repository, secrets, presenter, NullLogger<ProviderSecretBridge>.Instance);
+        var request = JsonSerializer.Serialize(new
+        {
+            id = "m2",
+            method = "providers.showFullMac",
+            @params = new { providerKey = provider.Key }
+        });
 
-        var response = await bridge.TryHandleAsync($$"""{"id":"m2","method":"providers.showFullMac","params":{"providerKey":"{{provider.Key}}"}}""");
+        var response = await bridge.TryHandleAsync(request);
 
         Assert.NotNull(response);
         using var document = JsonDocument.Parse(response);
