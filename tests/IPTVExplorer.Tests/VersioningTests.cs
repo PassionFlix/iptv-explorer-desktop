@@ -36,15 +36,15 @@ public sealed class VersioningTests
     }
 
     [Theory]
-    [InlineData("v1.0.0", false)]
     [InlineData("v1.1.0", false)]
-    [InlineData("v1.1.1", true)]
-    [InlineData("v1.2.0", true)]
-    [InlineData("v2.0.0", true)]
+    [InlineData("v2.0.0", false)]
+    [InlineData("v2.0.1", true)]
+    [InlineData("v2.1.0", true)]
+    [InlineData("v3.0.0", true)]
     [InlineData("not-a-version", false)]
-    public void UpdateComparisonUsesRelease110AssemblyVersion(string releaseTag, bool expected)
+    public void UpdateComparisonUsesRelease200AssemblyVersion(string releaseTag, bool expected)
     {
-        Assert.Equal("1.1.0", ApplicationVersion.Display);
+        Assert.Equal("2.0.0", ApplicationVersion.Display);
         Assert.Equal(expected, ApplicationVersion.IsNewerRelease(releaseTag));
     }
 

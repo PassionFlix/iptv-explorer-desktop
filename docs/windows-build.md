@@ -51,20 +51,20 @@ Les informations d'origine et de checksum sont dans `build/libmpv-runtime.json`.
 Pour générer le ZIP portable :
 
 ```powershell
-.\scripts\Publish-Release.ps1 -Version 1.1.0
+.\scripts\Publish-Release.ps1 -Version 2.0.0
 ```
 
 Avec Inno Setup 6 :
 
 ```powershell
-.\scripts\Publish-Release.ps1 -Version 1.1.0 -BuildInstaller
+.\scripts\Publish-Release.ps1 -Version 2.0.0 -BuildInstaller
 ```
 
 Le résultat est écrit dans `dist\`.
 
 ## GitHub Release
 
-Le workflow `.github/workflows/release.yml` peut être lancé manuellement pour produire les artefacts de test. Lorsqu'un tag `v1.1.0` est poussé, le même workflow :
+Le workflow `.github/workflows/release.yml` peut être lancé manuellement pour produire les artefacts de test. Lorsqu'un tag `v2.0.0` est poussé, le même workflow :
 
 1. restaure, build et teste la solution ;
 2. récupère la build libmpv x64 LGPL épinglée ;

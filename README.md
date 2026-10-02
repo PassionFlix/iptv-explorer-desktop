@@ -1,6 +1,6 @@
 # IPTV Explorer Desktop
 
-![Version](https://img.shields.io/badge/version-1.1.0-6d5dfc)
+![Version](https://img.shields.io/badge/version-2.0.0-6d5dfc)
 ![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64-0078d4)
 ![License](https://img.shields.io/badge/license-MIT-22c55e)
 
@@ -15,9 +15,10 @@ L'application est conçue autour d'un principe simple : **aucun fournisseur, ide
 - Multi-fournisseur Xtream Codes et Stalker/MAG.
 - Assistant d'ajout avec détection, test de connexion et sélection des catégories.
 - Live, Films et Séries avec pagination et fiches détaillées.
+- Live intégré à la fenêtre principale avec catégories, recherche, favoris locaux, tri fournisseur et plein écran natif.
 - Recherche locale Films & Séries via index SQLite par fournisseur.
 - Construction automatique du premier index après l'ajout d'un fournisseur actif avec des catégories Films/Séries sélectionnées.
-- Lecteur natif **libmpv** intégré : Live, VOD et épisodes.
+- Lecteur natif **libmpv** intégré : Live dans la fenêtre principale, VOD et épisodes dans leur lecteur dédié.
 - Sélecteur d'épisodes directement dans le lecteur pour passer d'un épisode au suivant sans fermer la fenêtre.
 - Audio MULTi, sous-titres, volume, seek, plein écran et changement de pistes.
 - Téléchargement Films et épisodes avec progression, débit, annulation et copie du lien média.
@@ -31,10 +32,10 @@ La version stable est publiée dans **GitHub Releases** :
 
 https://github.com/PassionFlix/iptv-explorer-desktop/releases/latest
 
-La release `v1.1.0` fournit :
+La release `v2.0.0` fournit :
 
-- `IPTV-Explorer-Setup-1.1.0-x64.exe` — installateur Windows x64.
-- `IPTV-Explorer-1.1.0-win-x64.zip` — version portable.
+- `IPTV-Explorer-Setup-2.0.0-x64.exe` — installateur Windows x64.
+- `IPTV-Explorer-2.0.0-win-x64.zip` — version portable.
 - `SHA256SUMS.txt` — sommes SHA-256 des artefacts.
 
 Le build Release est **self-contained** : le runtime .NET n'a pas besoin d'être installé séparément. Microsoft Edge WebView2 Runtime doit être disponible sur Windows ; il est déjà présent sur la grande majorité des installations Windows 10/11 modernes.
@@ -114,7 +115,7 @@ Pour précharger ou actualiser manuellement le runtime libmpv LGPL utilisé par 
 Pour générer le package portable local :
 
 ```powershell
-.\scripts\Publish-Release.ps1 -Version 1.1.0
+.\scripts\Publish-Release.ps1 -Version 2.0.0
 ```
 
 Avec Inno Setup installé, l'option `-BuildInstaller` génère également l'installateur EXE.
