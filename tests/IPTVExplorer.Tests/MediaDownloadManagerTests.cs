@@ -56,7 +56,7 @@ public sealed class MediaDownloadManagerTests
     public async Task TerminalOperationIsRemovedAfterRetention()
     {
         using var files = new DownloadFiles();
-        await using var manager = CreateManager(() => SuccessHandler("retained"), TimeSpan.FromMilliseconds(20));
+        await using var manager = CreateManager(() => SuccessHandler("retained"), TimeSpan.FromMilliseconds(200));
         var operation = manager.Start("video.ts", files.Final, Media());
         await WaitUntilAsync(() => manager.CancellationDisposed(operation.DownloadId));
 
