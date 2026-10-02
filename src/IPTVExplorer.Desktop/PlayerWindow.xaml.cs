@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -13,8 +14,10 @@ public partial class PlayerWindow : Window
     private readonly IPlayerService _player;
     private readonly TrueFullscreenBehavior _fullscreenBehavior;
     private readonly DispatcherTimer _controlsHideTimer;
+    private readonly DispatcherTimer _fullscreenPointerTimer;
     private readonly Brush _windowedControlsBackground;
     private readonly TaskCompletionSource<nint> _renderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Point? _lastFullscreenPointerScreen;
     private bool _seeking;
     private bool _softStopped;
     private bool _updatingTracks;
@@ -31,6 +34,8 @@ public partial class PlayerWindow : Window
         _windowedControlsBackground = ControlsPanel.Background;
         _controlsHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
         _controlsHideTimer.Tick += OnControlsHideTimerTick;
+        _fullscreenPointerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        _fullscreenPointerTimer.Tick += OnFullscreenPointerTimerTick;
         VideoHost.HandleReady += OnHandleReady;
         VideoHost.PointerMoved += OnVideoPointerMoved;
         _player.StateChanged += OnStateChanged;
@@ -232,12 +237,16 @@ public partial class PlayerWindow : Window
         ControlsPanel.Background = new SolidColorBrush(Color.FromArgb(232, 16, 23, 34));
         FullscreenControlsPopup.Child = ControlsPanel;
         FullscreenControlsPopup.Width = PlayerLayout.ActualWidth;
+        _lastFullscreenPointerScreen = null;
+        _fullscreenPointerTimer.Start();
         ShowFullscreenControls();
     }
 
     private void ExitFullscreenControls()
     {
         _controlsHideTimer.Stop();
+        _fullscreenPointerTimer.Stop();
+        _lastFullscreenPointerScreen = null;
         FullscreenControlsPopup.IsOpen = false;
         FullscreenControlsPopup.Child = null;
         ControlsPanel.Background = _windowedControlsBackground;
@@ -269,6 +278,27 @@ public partial class PlayerWindow : Window
         FullscreenControlsPopup.IsOpen = false;
         Cursor = Cursors.None;
         VideoHost.SetCursorHidden(true);
+    }
+
+    private void OnFullscreenPointerTimerTick(object? sender, EventArgs e)
+    {
+        if (!_fullscreenBehavior.IsFullscreen)
+        {
+            _fullscreenPointerTimer.Stop();
+            _lastFullscreenPointerScreen = null;
+            return;
+        }
+
+        if (!GetCursorPos(out var nativePoint)) return;
+        var screenPoint = new Point(nativePoint.X, nativePoint.Y);
+        if (_lastFullscreenPointerScreen is Point previous && previous == screenPoint) return;
+        _lastFullscreenPointerScreen = screenPoint;
+
+        if (PresentationSource.FromVisual(this) is null) return;
+        var clientPoint = PointFromScreen(screenPoint);
+        if (clientPoint.X < 0 || clientPoint.Y < 0 || clientPoint.X > ActualWidth || clientPoint.Y > ActualHeight) return;
+
+        ShowFullscreenControls();
     }
 
     private void RestoreCursor()
@@ -322,6 +352,8 @@ public partial class PlayerWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         _controlsHideTimer.Stop();
+        _fullscreenPointerTimer.Stop();
+        _lastFullscreenPointerScreen = null;
         FullscreenControlsPopup.IsOpen = false;
         RestoreCursor();
         VideoHost.PointerMoved -= OnVideoPointerMoved;
@@ -336,6 +368,17 @@ public partial class PlayerWindow : Window
     }
 
     private static string FormatTime(TimeSpan value) => value.TotalHours >= 1 ? value.ToString(@"hh\:mm\:ss") : value.ToString(@"mm\:ss");
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
 
     private sealed record TrackChoice(long? Id, string Label, bool Selected)
     {
