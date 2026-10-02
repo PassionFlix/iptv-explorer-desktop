@@ -13,17 +13,24 @@ public sealed class StalkerCompatibilityTests
     private static readonly ProviderSecret Secret = new(MacAddress: Mac);
 
     [Fact]
-    public async Task ValidLegacyHandshakeDoesNotSendMagFallback()
+    public async Task ValidLegacyProfileKeepsLegacyWithoutMagFallback()
     {
         var handler = new CompatibilityHandler();
         using var http = new HttpClient(handler);
-        var account = await new StalkerProviderClient(Provider, Secret, http).GetAccountInfoAsync();
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        var account = await new StalkerProviderClient(Provider, Secret, http, diagnosticTrace: trace).GetAccountInfoAsync();
 
         Assert.True(account.Authenticated);
         Assert.Equal(1, handler.LegacyHandshakes);
         Assert.Equal(0, handler.MagHandshakes);
+        Assert.Equal(1, handler.ProfileRequests);
+        Assert.Equal(["handshake", "get_profile", "get_main_info"], handler.Requests.Select(request => request.Action));
         Assert.All(handler.Requests, request => Assert.Equal("Mozilla/5.0 MAG254 stbapp", request.UserAgent));
         Assert.DoesNotContain(handler.Requests.Single(request => request.Action == "get_profile").Parameters, pair => pair.Key == "stb_type");
+        Assert.Contains("legacy_handshake=success", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("legacy_profile=usable", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("selected_profile=Legacy", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("legacy-token", trace.Text, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -85,6 +92,11 @@ public sealed class StalkerCompatibilityTests
         Assert.Equal("21DA59C248805FDF0F36FA2C4CA4569E10D1F80268D8104C7AF8BB776D657ED8", profile.Parameters["device_id2"]);
         Assert.Equal("289CCA57DB723456CA8610EA5C8DF672A93BDF61E0AA6EAAAE1FC53C28E52769", profile.Parameters["signature"]);
         Assert.Equal("1-xml", profile.Parameters["JsHttpRequest"]);
+
+        _ = await client.GetVodCategoriesAsync();
+        Assert.Equal(1, handler.LegacyHandshakes);
+        Assert.Equal(1, handler.MagHandshakes);
+        Assert.Equal(1, handler.ProfileRequests);
     }
 
     [Theory]
@@ -135,14 +147,32 @@ public sealed class StalkerCompatibilityTests
     }
 
     [Fact]
-    public async Task GenericProfileWithZeroIdIsAuthenticated()
+    public async Task GenericLegacyProfileFallsBackOnceToMagAndCachesMagProfile()
     {
-        var handler = new CompatibilityHandler { ProfileJson = "{\"js\":{\"id\":0,\"blocked\":0,\"status\":1}}" };
+        var handler = new CompatibilityHandler
+        {
+            LegacyProfileJson = "{\"js\":{\"id\":0,\"mac\":\"\",\"user_id\":\"\",\"blocked\":0,\"status\":1}}"
+        };
         using var http = new HttpClient(handler);
-        var account = await new StalkerProviderClient(Provider, Secret, http).GetAccountInfoAsync();
+        var trace = new RecordingPlaybackDiagnosticTrace();
+        var client = new StalkerProviderClient(Provider, Secret, http, diagnosticTrace: trace);
+        var account = await client.GetAccountInfoAsync();
+        _ = await client.GetLiveCategoriesAsync();
 
         Assert.True(account.Authenticated);
-        Assert.Equal("1", account.Status);
+        Assert.Equal("Enabled", account.Status);
+        Assert.Equal(1, handler.LegacyHandshakes);
+        Assert.Equal(1, handler.MagHandshakes);
+        Assert.Equal(2, handler.ProfileRequests);
+        Assert.Equal(
+            ["handshake", "get_profile", "handshake", "get_profile", "get_main_info", "get_genres"],
+            handler.Requests.Select(request => request.Action));
+        Assert.Equal([false, false, true, true, true, true], handler.Requests.Select(request => request.IsMag));
+        Assert.Contains("legacy_handshake=success", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("legacy_profile=generic", trace.Text, StringComparison.Ordinal);
+        Assert.Contains("selected_profile=Mag254Compatible", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("legacy-token", trace.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("mag-token", trace.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -280,6 +310,8 @@ public sealed class StalkerCompatibilityTests
         public HttpStatusCode? FirstGenresRejection { get; init; }
         public bool CrossHostLegacyRedirect { get; init; }
         public string ProfileJson { get; init; } = "{\"js\":{\"id\":\"profile-1\",\"auth\":1,\"blocked\":0,\"status\":\"Enabled\"}}";
+        public string? LegacyProfileJson { get; init; }
+        public string? MagProfileJson { get; init; }
         public string MainInfoJson { get; init; } = "{\"js\":{}}";
         public HttpStatusCode MainInfoStatus { get; init; } = HttpStatusCode.OK;
         public List<RequestSnapshot> Requests { get; } = [];
@@ -294,7 +326,7 @@ public sealed class StalkerCompatibilityTests
             if (action == "get_profile")
             {
                 ProfileRequests++;
-                return Task.FromResult(Json(ProfileJson));
+                return Task.FromResult(Json(snapshot.IsMag ? MagProfileJson ?? ProfileJson : LegacyProfileJson ?? ProfileJson));
             }
             if (action == "get_main_info")
             {

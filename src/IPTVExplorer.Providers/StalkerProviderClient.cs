@@ -624,31 +624,45 @@ public sealed class StalkerProviderClient(
                 return;
             }
 
-            Exception legacyFailure;
+            Exception? legacyFailure = null;
             try
             {
                 var token = await HandshakeAsync(RequestProfile.Legacy, cancellationToken);
-                _requestProfile = RequestProfile.Legacy;
-                Trace("STALKER SESSION PROFILE SELECTED", Field("profile", RequestProfile.Legacy.ToString()));
+                Trace("STALKER SESSION NEGOTIATION", Field("legacy_handshake", "success"));
                 _token = token;
                 _sessionProfile = null;
                 _magProfileBootstrapped = false;
-                return;
+
+                var legacyProfile = await GetLegacyProfileForValidationAsync(cancellationToken);
+                var usable = IsUsableLegacyProfile(legacyProfile);
+                Trace("STALKER SESSION NEGOTIATION", Field("legacy_profile", usable ? "usable" : "generic"));
+                if (usable)
+                {
+                    _requestProfile = RequestProfile.Legacy;
+                    _sessionProfile = legacyProfile;
+                    Trace("STALKER SESSION PROFILE SELECTED", Field("selected_profile", RequestProfile.Legacy.ToString()));
+                    return;
+                }
+
+                InvalidateSession();
+                legacyFailure = new InvalidDataException("Legacy profile is generic.");
             }
             catch (Exception exception) when (IsFallbackCompatible(exception))
             {
+                InvalidateSession();
                 legacyFailure = exception;
             }
 
             try
             {
                 _requestProfile = RequestProfile.Mag254Compatible;
-                Trace("STALKER SESSION PROFILE SELECTED", Field("profile", RequestProfile.Mag254Compatible.ToString()));
                 await EstablishSessionAsync(RequestProfile.Mag254Compatible, cancellationToken);
+                Trace("STALKER SESSION PROFILE SELECTED", Field("selected_profile", RequestProfile.Mag254Compatible.ToString()));
             }
             catch (Exception magFailure) when (IsFallbackCompatible(magFailure))
             {
-                throw StalkerResponseException.HandshakeProfilesFailed(legacyFailure, magFailure);
+                throw StalkerResponseException.HandshakeProfilesFailed(
+                    legacyFailure ?? new InvalidDataException("Legacy session validation failed."), magFailure);
             }
         }
         finally { _handshake.Release(); }
@@ -689,12 +703,34 @@ public sealed class StalkerProviderClient(
     private async Task<JsonElement> GetAccountProfileAsync(CancellationToken cancellationToken)
     {
         await EnsureTokenAsync(cancellationToken);
-        if (_requestProfile == RequestProfile.Mag254Compatible)
-            return _sessionProfile ?? throw new InvalidOperationException("The MAG session profile is unavailable.");
+        if (_sessionProfile is { } cachedProfile) return cachedProfile;
 
         using var document = await PortalAsync("stb", "get_profile", [], cancellationToken);
         return document.RootElement.Unwrap().Clone();
     }
+
+    private async Task<JsonElement> GetLegacyProfileForValidationAsync(CancellationToken cancellationToken)
+    {
+        if (_token is null) throw new InvalidOperationException("A Legacy session token is required before profile validation.");
+        using var document = await SendAsync("stb", "get_profile", [], includeToken: true,
+            RequestProfile.Legacy, cancellationToken);
+        return document.RootElement.Unwrap().Clone();
+    }
+
+    private static bool IsUsableLegacyProfile(JsonElement profile)
+    {
+        if (profile.ValueKind != JsonValueKind.Object) return false;
+        return HasIdentity(profile.Text("id")) ||
+            HasIdentity(profile.Text("user_id")) ||
+            HasIdentity(profile.Text("mac")) ||
+            HasIdentity(profile.Text("login")) ||
+            HasIdentity(profile.Text("username")) ||
+            HasIdentity(profile.Text("account_id")) ||
+            HasIdentity(profile.Text("account_number"));
+    }
+
+    private static bool HasIdentity(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && !string.Equals(value.Trim(), "0", StringComparison.Ordinal);
 
     private IReadOnlyList<(string Key, string Value)> BuildMagProfileParameters()
     {
@@ -730,7 +766,8 @@ public sealed class StalkerProviderClient(
         return candidate;
     }
 
-    private static bool IsFallbackCompatible(Exception exception) => exception is StalkerResponseException or InvalidDataException;
+    private static bool IsFallbackCompatible(Exception exception) =>
+        exception is StalkerResponseException or InvalidDataException or StalkerSessionExpiredException;
 
     private async Task<JsonDocument> SendAsync(string type, string action, IReadOnlyList<(string Key, string Value)> parameters,
         bool includeToken, RequestProfile profile, CancellationToken cancellationToken, bool retryTransient = true)

@@ -428,7 +428,7 @@ public sealed class ProviderFixtureTests
 
         Assert.Equal(ProviderType.Stalker, tested.DetectedType);
         Assert.Equal("/server/load.php", handler.SuccessfulPath);
-        Assert.Equal(["/portal.php", "/server/load.php"], handler.HandshakePaths);
+        Assert.Equal(["/portal.php", "/portal.php", "/server/load.php"], handler.HandshakePaths);
     }
 
     [Fact]
