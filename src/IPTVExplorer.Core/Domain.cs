@@ -20,7 +20,7 @@ public sealed record ProviderRecord(
     string Status = "ready");
 
 public sealed record ProviderSecret(string? Username = null, string? Password = null, string? MacAddress = null);
-public sealed record ProviderCategory(string RemoteId, string Name, string NormalizedName, bool Selected = true, bool Present = true, bool NeedsReview = false, DateTimeOffset? LastSeen = null, bool Technical = false);
+public sealed record ProviderCategory(string RemoteId, string Name, string NormalizedName, bool Selected = true, bool Present = true, bool NeedsReview = false, DateTimeOffset? LastSeen = null, bool Technical = false, string? ParentRemoteId = null);
 public sealed record CategoryPolicy(CategoryPolicyMode Mode, IReadOnlySet<string> SelectedIds);
 public sealed record AccountInfo(
     bool Authenticated,

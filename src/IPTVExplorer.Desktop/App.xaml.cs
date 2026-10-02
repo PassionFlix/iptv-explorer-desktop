@@ -31,7 +31,9 @@ public partial class App : Application
             builder.Services.AddSingleton<DatabaseInitializer>();
             builder.Services.AddSingleton<ISecretStore, DpapiSecretStore>();
             builder.Services.AddSingleton<ProviderRepository>();
-            builder.Services.AddSingleton<IProviderRepository>(sp => sp.GetRequiredService<ProviderRepository>());
+            builder.Services.AddSingleton<CategoryHierarchyRepository>();
+            builder.Services.AddSingleton<HierarchyProviderRepository>();
+            builder.Services.AddSingleton<IProviderRepository>(sp => sp.GetRequiredService<HierarchyProviderRepository>());
             builder.Services.AddSingleton<IAppSettingsRepository, AppSettingsRepository>();
             builder.Services.AddSingleton<RebuildJobRepository>();
             builder.Services.AddSingleton<AtomicSearchIndex>();
@@ -65,6 +67,7 @@ public partial class App : Application
             builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddSingleton<FavoriteBridge>();
             builder.Services.AddSingleton<CatalogStatsBridge>();
+            builder.Services.AddSingleton<CategoryHierarchyBridge>();
             builder.Services.AddSingleton<INativeSecretPresenter, NativeSecretPresenter>();
             builder.Services.AddSingleton<ProviderSecretBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
@@ -93,7 +96,8 @@ public partial class App : Application
                 _host.Services.GetRequiredService<MediaActionBridge>(),
                 _host.Services.GetRequiredService<FavoriteBridge>(),
                 _host.Services.GetRequiredService<ProviderSecretBridge>(),
-                _host.Services.GetRequiredService<CatalogStatsBridge>());
+                _host.Services.GetRequiredService<CatalogStatsBridge>(),
+                _host.Services.GetRequiredService<CategoryHierarchyBridge>());
             MainWindow = window;
             window.Show();
         }

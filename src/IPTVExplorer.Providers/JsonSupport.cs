@@ -54,10 +54,18 @@ internal static class JsonSupport
                 var displayName = WebUtility.HtmlDecode(name);
                 var normalized = InfrastructureCompatibleNormalize(displayName);
                 var technical = normalized is "ALL" or "ALL CHANNELS" or "ALL MOVIES" or "ALL SERIES" || id is "*" or "0";
-                result.Add(new ProviderCategory(id, displayName, normalized, Technical: technical));
+                var parent = NormalizeParent(item.Text("parent_id", "category_parent_id", "genre_parent_id", "parent_category_id"), id);
+                result.Add(new ProviderCategory(id, displayName, normalized, Technical: technical, ParentRemoteId: parent));
             }
         }
         return result;
+    }
+
+    private static string? NormalizeParent(string? value, string id)
+    {
+        var parent = value?.Trim();
+        if (string.IsNullOrEmpty(parent) || parent == "0" || parent == "*" || string.Equals(parent, id, StringComparison.Ordinal)) return null;
+        return parent.Length <= 180 ? parent : null;
     }
 
     private static bool TryStalkerRecords(JsonElement root, out IReadOnlyList<JsonElement> records)
