@@ -445,7 +445,7 @@ public sealed class AntiBanCatalogTests
             f.Details = new(remote, snapshots, secrets, artwork);
             f.Router = new(database.Repository, local, null!, f.Management, new AppSettingsRepository(database.Connections),
                 new RebuildJobRepository(database.Connections), new SearchService(database.Paths), artwork, new PlaybackHistoryRepository(database.Connections),
-                secrets, null!, NullLogger<BridgeRouter>.Instance, snapshots, f.Refresh, f.Details);
+                secrets, null!, null!, NullLogger<BridgeRouter>.Instance, snapshots, f.Refresh, f.Details, new LiveChannelDisplayNameCache());
             return f;
         }
         public CatalogRefreshService NewRefresh() => new(Database.Repository, Remote, Secrets, Snapshots, new(Database.Connections), Clock);

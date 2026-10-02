@@ -17,6 +17,7 @@
     <Compile Include="..\..\src\IPTVExplorer.Desktop\FavoriteBridge.cs" Link="FavoriteBridge.cs" />
     <Compile Include="..\..\src\IPTVExplorer.Desktop\ProviderSecretBridge.cs" Link="ProviderSecretBridge.cs" />
     <Compile Include="..\..\src\IPTVExplorer.Desktop\CatalogStatsBridge.cs" Link="CatalogStatsBridge.cs" />
+    <Compile Include="..\..\src\IPTVExplorer.Desktop\LiveChannelDisplayNameCache.cs" Link="LiveChannelDisplayNameCache.cs" />
     <Compile Include="..\..\src\IPTVExplorer.Desktop\MediaDownloadManager.cs" Link="MediaDownloadManager.cs" />
     <Compile Include="..\..\src\IPTVExplorer.Desktop\MediaDownloadNaming.cs" Link="MediaDownloadNaming.cs" />
   </ItemGroup>

@@ -3,8 +3,11 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using IPTVExplorer.Core;
 using IPTVExplorer.Infrastructure;
+using IPTVExplorer.Player;
 using Microsoft.Web.WebView2.Core;
 
 namespace IPTVExplorer.Desktop;
@@ -12,13 +15,21 @@ namespace IPTVExplorer.Desktop;
 public partial class MainWindow : Window
 {
     private const string ReleasesPrefix = "https://github.com/PassionFlix/iptv-explorer-desktop/releases/";
+    private const double DefaultLivePlayerWidth = 480;
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly BridgeRouter _bridge;
     private readonly MediaActionBridge _mediaActions;
     private readonly FavoriteBridge _favorites;
     private readonly ProviderSecretBridge _providerSecrets;
     private readonly CatalogStatsBridge _catalogStats;
-    private readonly CategoryHierarchyBridge _categoryHierarchy;
+    private readonly IPlayerService _player;
+    private readonly TrueFullscreenBehavior _liveFullscreenBehavior;
+    private readonly TaskCompletionSource<nint> _liveRenderHandle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private PlayerState _liveState = PlayerState.Idle;
+    private bool _liveSoftStopped;
+    private bool _liveSurfaceActive;
+    private bool _updatingLiveTracks;
+    private double _liveWindowedWidth = DefaultLivePlayerWidth;
 
     public MainWindow(
         BridgeRouter bridge,
@@ -26,17 +37,22 @@ public partial class MainWindow : Window
         FavoriteBridge favorites,
         ProviderSecretBridge providerSecrets,
         CatalogStatsBridge catalogStats,
-        CategoryHierarchyBridge categoryHierarchy)
+        IPlayerService player)
     {
         _bridge = bridge;
         _mediaActions = mediaActions;
         _favorites = favorites;
         _providerSecrets = providerSecrets;
         _catalogStats = catalogStats;
-        _categoryHierarchy = categoryHierarchy;
+        _player = player;
         InitializeComponent();
+        _liveFullscreenBehavior = new(this);
+        LiveVideoHost.HandleReady += OnLiveHandleReady;
+        _player.StateChanged += OnLivePlayerStateChanged;
+        _player.TrackListChanged += OnLiveTrackListChanged;
         Loaded += FitWindowToWorkArea;
         Loaded += InitializeWebViewAsync;
+        Closed += OnMainWindowClosed;
     }
 
     private static HttpClient CreateUpdateClient()
@@ -81,14 +97,10 @@ public partial class MainWindow : Window
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(mediaActionsScript);
             var favoritesScript = await File.ReadAllTextAsync(Path.Combine(assets, "favorites.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(favoritesScript);
-            var liveCompactScript = await File.ReadAllTextAsync(Path.Combine(assets, "live-compact.js"));
-            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(liveCompactScript);
             var providerNativeActionsScript = await File.ReadAllTextAsync(Path.Combine(assets, "provider-native-actions.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(providerNativeActionsScript);
             var diagnosticStatsScript = await File.ReadAllTextAsync(Path.Combine(assets, "diagnostic-local-stats.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(diagnosticStatsScript);
-            var categoryHierarchyScript = await File.ReadAllTextAsync(Path.Combine(assets, "category-hierarchy.js"));
-            await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(categoryHierarchyScript);
             var polishScript = await File.ReadAllTextAsync(Path.Combine(assets, "v1-polish.js"));
             await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(polishScript);
             Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
@@ -176,10 +188,216 @@ public partial class MainWindow : Window
         if (message.Length > 2_000_000) return;
         var response = await _providerSecrets.TryHandleAsync(message)
             ?? await _catalogStats.TryHandleAsync(message)
-            ?? await _categoryHierarchy.TryHandleAsync(message)
             ?? await _favorites.TryHandleAsync(message)
             ?? await _mediaActions.TryHandleAsync(message)
             ?? await _bridge.HandleAsync(message);
         Browser.CoreWebView2.PostWebMessageAsJson(response);
+    }
+
+    internal async Task<nint> ShowIntegratedLivePlayerAsync(string title, CancellationToken cancellationToken = default)
+    {
+        if (!Dispatcher.CheckAccess())
+            return await Dispatcher.InvokeAsync(() => ShowIntegratedLivePlayerAsync(title, cancellationToken)).Task.Unwrap();
+
+        SetIntegratedLivePlayerVisible(true, stopPlayback: false);
+        _liveSurfaceActive = true;
+        _liveSoftStopped = false;
+        LivePlayerTitle.Text = CleanLiveTitle(title);
+        LiveStatusText.Text = "Chargement…";
+        LivePlayPauseButton.Content = "Pause";
+
+        if (LiveVideoHost.NativeHandle != 0) _liveRenderHandle.TrySetResult(LiveVideoHost.NativeHandle);
+        return await _liveRenderHandle.Task.WaitAsync(cancellationToken);
+    }
+
+    internal void SetIntegratedLivePlayerVisible(bool visible, bool stopPlayback)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => SetIntegratedLivePlayerVisible(visible, stopPlayback));
+            return;
+        }
+
+        if (visible)
+        {
+            LivePlayerPane.Visibility = Visibility.Visible;
+            if (!_liveFullscreenBehavior.IsFullscreen)
+                LivePlayerColumn.Width = new GridLength(Math.Max(400, _liveWindowedWidth));
+            return;
+        }
+
+        if (_liveFullscreenBehavior.IsFullscreen) SetLiveFullscreen(false);
+        if (stopPlayback && _liveSurfaceActive) _player.Stop();
+        _liveSurfaceActive = false;
+        _liveSoftStopped = false;
+        _liveState = PlayerState.Idle;
+        LivePlayerPane.Visibility = Visibility.Collapsed;
+        LivePlayerColumn.Width = new GridLength(0);
+        LivePlayerTitle.Text = "Sélectionnez une chaîne";
+        LiveStatusText.Text = "Prêt";
+        LivePlayPauseButton.Content = "Pause";
+        LiveAudioTracks.ItemsSource = null;
+        LiveSubtitleTracks.ItemsSource = null;
+    }
+
+    private void OnLiveHandleReady(object? sender, EventArgs e)
+    {
+        if (LiveVideoHost.NativeHandle != 0) _liveRenderHandle.TrySetResult(LiveVideoHost.NativeHandle);
+    }
+
+    private void OnLivePlayerStateChanged(object? sender, PlayerStateChangedEventArgs e) => Dispatcher.BeginInvoke(() =>
+    {
+        if (!_liveSurfaceActive) return;
+        if (e.State is PlayerState.Loading or PlayerState.Playing) _liveSoftStopped = false;
+        var state = _liveSoftStopped && e.State == PlayerState.Paused ? PlayerState.Stopped : e.State;
+        _liveState = state;
+        LivePlayPauseButton.Content = state is PlayerState.Paused or PlayerState.Stopped ? "Lecture" : "Pause";
+        LiveStatusText.Text = e.SafeMessage ?? state switch
+        {
+            PlayerState.Loading => "Chargement…",
+            PlayerState.Playing => "Lecture",
+            PlayerState.Paused => "Pause",
+            PlayerState.Stopped => "Arrêté",
+            PlayerState.Error => "Erreur du lecteur",
+            _ => "Prêt"
+        };
+    });
+
+    private void OnLiveTrackListChanged(object? sender, TrackListChangedEventArgs e) => Dispatcher.BeginInvoke(() =>
+    {
+        if (!_liveSurfaceActive) return;
+        _updatingLiveTracks = true;
+        try
+        {
+            var audio = e.Tracks.Where(track => track.Type == MediaTrackType.Audio).Select(LiveTrackChoice.From).ToArray();
+            LiveAudioTracks.ItemsSource = audio;
+            LiveAudioTracks.SelectedItem = audio.FirstOrDefault(choice => choice.Selected) ?? audio.FirstOrDefault();
+            LiveAudioTracks.IsEnabled = audio.Length > 0;
+
+            var subtitles = new[] { new LiveTrackChoice(null, "Aucun", false) }
+                .Concat(e.Tracks.Where(track => track.Type == MediaTrackType.Subtitle).Select(LiveTrackChoice.From)).ToArray();
+            LiveSubtitleTracks.ItemsSource = subtitles;
+            LiveSubtitleTracks.SelectedItem = subtitles.FirstOrDefault(choice => choice.Selected) ?? subtitles[0];
+            LiveSubtitleTracks.IsEnabled = subtitles.Length > 1;
+        }
+        finally { _updatingLiveTracks = false; }
+    });
+
+    private void OnLivePlayPause(object sender, RoutedEventArgs e)
+    {
+        if (!_liveSurfaceActive) return;
+        if (_liveState is PlayerState.Paused or PlayerState.Stopped)
+        {
+            _liveSoftStopped = false;
+            _player.Play();
+        }
+        else
+        {
+            _player.Pause();
+        }
+    }
+
+    private void OnLiveStop(object sender, RoutedEventArgs e)
+    {
+        if (!_liveSurfaceActive || _liveState is PlayerState.Idle or PlayerState.Error) return;
+        _liveSoftStopped = true;
+        _player.Stop();
+        _liveState = PlayerState.Stopped;
+        LivePlayPauseButton.Content = "Lecture";
+        LiveStatusText.Text = "Arrêté";
+    }
+
+    private void OnLiveVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (IsLoaded && _liveSurfaceActive) _player.SetVolume(e.NewValue);
+    }
+
+    private void OnLiveAudioTrackChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_updatingLiveTracks && LiveAudioTracks.SelectedItem is LiveTrackChoice { Id: long id })
+            _player.SelectAudioTrack(id);
+    }
+
+    private void OnLiveSubtitleTrackChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updatingLiveTracks || LiveSubtitleTracks.SelectedItem is not LiveTrackChoice choice) return;
+        if (choice.Id is long id) _player.SelectSubtitleTrack(id);
+        else _player.SetSubtitleEnabled(false);
+    }
+
+    private void OnLiveFullscreen(object sender, RoutedEventArgs e) => SetLiveFullscreen(!_liveFullscreenBehavior.IsFullscreen);
+
+    private void SetLiveFullscreen(bool fullscreen)
+    {
+        if (!_liveSurfaceActive || _liveFullscreenBehavior.IsFullscreen == fullscreen) return;
+        if (fullscreen)
+        {
+            if (LivePlayerColumn.ActualWidth > 0) _liveWindowedWidth = LivePlayerColumn.ActualWidth;
+            if (!_liveFullscreenBehavior.Enter())
+            {
+                LiveStatusText.Text = "Impossible d’activer le plein écran";
+                return;
+            }
+            BrowserHost.Visibility = Visibility.Collapsed;
+            BrowserColumn.Width = new GridLength(0);
+            LivePlayerColumn.Width = new GridLength(1, GridUnitType.Star);
+            LivePlayerPane.BorderThickness = new Thickness(0);
+            LiveFullscreenButton.Content = "Quitter";
+        }
+        else
+        {
+            BrowserHost.Visibility = Visibility.Visible;
+            BrowserColumn.Width = new GridLength(1, GridUnitType.Star);
+            LivePlayerColumn.Width = new GridLength(Math.Max(400, _liveWindowedWidth));
+            LivePlayerPane.BorderThickness = new Thickness(1, 0, 0, 0);
+            _ = _liveFullscreenBehavior.Exit();
+            LiveFullscreenButton.Content = "Plein écran";
+        }
+        _player.SetFullscreen(fullscreen);
+    }
+
+    private void OnMainWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (!_liveSurfaceActive) return;
+        if (e.Key == Key.Escape && _liveFullscreenBehavior.IsFullscreen)
+        {
+            SetLiveFullscreen(false);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.F11)
+        {
+            SetLiveFullscreen(!_liveFullscreenBehavior.IsFullscreen);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Space && Keyboard.FocusedElement is not ComboBox)
+        {
+            OnLivePlayPause(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+    }
+
+    private void OnMainWindowClosed(object? sender, EventArgs e)
+    {
+        LiveVideoHost.HandleReady -= OnLiveHandleReady;
+        _player.StateChanged -= OnLivePlayerStateChanged;
+        _player.TrackListChanged -= OnLiveTrackListChanged;
+    }
+
+    private static string CleanLiveTitle(string? value)
+    {
+        var title = new string((value ?? string.Empty).Where(character => !char.IsControl(character)).ToArray()).Trim();
+        return title.Length switch { 0 => "Chaîne Live", > 180 => title[..180].TrimEnd(), _ => title };
+    }
+
+    private sealed record LiveTrackChoice(long? Id, string Label, bool Selected)
+    {
+        public static LiveTrackChoice From(MediaTrack track)
+        {
+            var language = string.IsNullOrWhiteSpace(track.Language) ? "Audio" : track.Language.Trim().ToUpperInvariant();
+            var title = string.IsNullOrWhiteSpace(track.Title) ? null : track.Title.Trim();
+            return new(track.Id, title is null ? language : $"{language} · {title}", track.Selected);
+        }
+
+        public override string ToString() => Label;
     }
 }

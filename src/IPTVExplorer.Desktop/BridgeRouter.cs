@@ -21,10 +21,12 @@ public sealed class BridgeRouter(
     IPlaybackHistoryRepository playbackHistory,
     ISecretStore secrets,
     PlaybackCoordinator playback,
+    IPlayerWindowManager playerWindows,
     ILogger<BridgeRouter> logger,
     CatalogSnapshotRepository snapshots,
     CatalogRefreshService catalogRefresh,
-    MediaDetailService details)
+    MediaDetailService details,
+    LiveChannelDisplayNameCache liveTitles)
 {
     private static readonly JsonSerializerOptions Json = CreateJson();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
@@ -102,8 +104,15 @@ public sealed class BridgeRouter(
         "home.content" => await HomeContent(Require<ProviderKeyRequest>(request).ProviderKey, cancellationToken),
         "player.open" => await playback.OpenAsync(Require<MediaReference>(request), cancellationToken),
         "player.resume" => await ResumePlayback(Require<ResumeRequest>(request), cancellationToken),
+        "player.liveSurface" => await SetLiveSurface(Require<LiveSurfaceRequest>(request), cancellationToken),
         _ => throw new NotSupportedException("Unknown bridge method.")
     };
+
+    private async Task<object> SetLiveSurface(LiveSurfaceRequest input, CancellationToken cancellationToken)
+    {
+        await playerWindows.SetLiveSurfaceVisibleAsync(input.Visible, cancellationToken);
+        return new { visible = input.Visible };
+    }
 
     private async Task<object> AppState(CancellationToken cancellationToken)
     {
@@ -212,7 +221,9 @@ public sealed class BridgeRouter(
     private async Task<object> LiveCatalog(CatalogRequest input, CancellationToken cancellationToken)
     {
         ValidateCategoryId(input.CategoryId); var client = await EnabledClient(input.ProviderKey, cancellationToken);
-        return (await client.GetLiveAsync(input.CategoryId, cancellationToken)).Select(SafeItem).ToArray();
+        var items = await client.GetLiveAsync(input.CategoryId, cancellationToken);
+        liveTitles.Store(input.ProviderKey, input.CategoryId, items);
+        return items.Select(SafeItem).ToArray();
     }
 
     private async Task<object> CatalogPage(PagedCatalogRequest input, CatalogType catalog, CancellationToken cancellationToken)
@@ -336,7 +347,7 @@ public sealed class BridgeRouter(
     }
     private async Task<ProviderRecord> RequiredProvider(string key, CancellationToken cancellationToken) { if (!ProviderKey.IsValid(key)) throw new ArgumentException("Invalid provider key."); return await providers.GetAsync(key, cancellationToken) ?? throw new KeyNotFoundException("Provider was not found."); }
     private static object SafeProvider(ProviderRecord provider) => new { key = provider.Key, type = provider.Type.ToString().ToLowerInvariant(), name = provider.Name, serverUrl = provider.ServerUri.ToString().TrimEnd('/'), provider.Enabled, provider.Status };
-    private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, category.Selected, category.Present, category.NeedsReview };
+    private static object SafeCategory(ProviderCategory category) => new { id = category.RemoteId, name = category.Name, parentId = category.ParentRemoteId, category.Selected, category.Present, category.NeedsReview };
     private static object SafeItem(CatalogItem item) => new { id = item.Id, title = item.Title, imageUrl = SafeImage(item.ImageUrl), item.Extension, item.Year, item.Rating, item.CategoryId };
     private static bool IndexDirty(IEnumerable<CategorySummary> summaries) => summaries.Any(summary => summary.Catalog is CatalogType.Vod or CatalogType.Series && summary.IndexDirty);
     private static string? SafeImage(string? value) => MediaArtwork.SafeImageUrl(value);
@@ -371,4 +382,5 @@ public sealed class BridgeRouter(
     private sealed record DetailRequest(string ProviderKey, string MediaId);
     private sealed record SearchRequest(string ProviderKey, string CatalogType, string Query, int Page, int PageSize);
     private sealed record ResumeRequest(string ProviderKey, string CatalogType, string MediaId);
+    private sealed record LiveSurfaceRequest(bool Visible);
 }

@@ -60,6 +60,7 @@ public partial class App : Application
                 sp.GetRequiredService<ISecretStore>(), sp.GetRequiredService<IRemoteProviderClientFactory>(),
                 sp.GetRequiredService<IProviderLocalData>()));
             builder.Services.AddSingleton<IPlayerService, LibMpvPlayerService>();
+            builder.Services.AddSingleton<LiveChannelDisplayNameCache>();
             builder.Services.AddSingleton<IPlayerWindowManager, PlayerWindowManager>();
             builder.Services.AddSingleton<PlaybackCoordinator>();
             builder.Services.AddSingleton<BridgeRouter>();
@@ -67,7 +68,6 @@ public partial class App : Application
             builder.Services.AddSingleton<MediaActionBridge>();
             builder.Services.AddSingleton<FavoriteBridge>();
             builder.Services.AddSingleton<CatalogStatsBridge>();
-            builder.Services.AddSingleton<CategoryHierarchyBridge>();
             builder.Services.AddSingleton<INativeSecretPresenter, NativeSecretPresenter>();
             builder.Services.AddSingleton<ProviderSecretBridge>();
             builder.Services.AddHostedService<IndexRebuildWorker>();
@@ -97,7 +97,7 @@ public partial class App : Application
                 _host.Services.GetRequiredService<FavoriteBridge>(),
                 _host.Services.GetRequiredService<ProviderSecretBridge>(),
                 _host.Services.GetRequiredService<CatalogStatsBridge>(),
-                _host.Services.GetRequiredService<CategoryHierarchyBridge>());
+                _host.Services.GetRequiredService<IPlayerService>());
             MainWindow = window;
             window.Show();
         }
